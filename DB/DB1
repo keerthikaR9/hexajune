@@ -1,0 +1,128 @@
+CREATE DATABASE automobile_insurance_system;
+USE automobile_insurance_system;
+
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100),
+    dob DATE,
+    age INT ,
+    address TEXT,
+    aadhaar_number VARCHAR(12) UNIQUE,
+    pan_number VARCHAR(10) UNIQUE,
+    email VARCHAR(100) UNIQUE,
+    password_hash VARCHAR(255),
+    role ENUM('customer', 'officer') DEFAULT 'customer',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE policies (
+    policy_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100),
+    vehicle_type ENUM('car', 'bike', 'truck', 'camper van'),
+    base_premium DECIMAL(10,2),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE policy_proposals (
+    proposal_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    policy_id INT,
+    vehicle_details TEXT,
+    quote_amount DECIMAL(10,2),
+    status ENUM('proposal_submitted', 'quote_generated', 'active', 'expired', 'rejected') DEFAULT 'proposal_submitted',
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    FOREIGN KEY (policy_id) REFERENCES policies(policy_id)
+);
+CREATE TABLE documents (
+    document_id INT AUTO_INCREMENT PRIMARY KEY,
+    proposal_id INT,
+    doc_type VARCHAR(100),
+    file_path VARCHAR(255),
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (proposal_id) REFERENCES policy_proposals(proposal_id)
+);
+CREATE TABLE payments (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    proposal_id INT,
+    amount_paid DECIMAL(10,2),
+    payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('paid', 'pending') DEFAULT 'pending',
+    FOREIGN KEY (proposal_id) REFERENCES policy_proposals(proposal_id)
+);
+
+CREATE TABLE notifications (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    message TEXT,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    type ENUM('reminder', 'quote', 'policy_document'),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE claims (
+    claim_id INT AUTO_INCREMENT PRIMARY KEY,
+    proposal_id INT,
+    user_id INT,
+    claim_reason TEXT,
+    status ENUM('initiated', 'under_review', 'approved', 'rejected') DEFAULT 'initiated',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (proposal_id) REFERENCES policy_proposals(proposal_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+INSERT INTO users (name, dob, age, address, aadhaar_number, pan_number, email, password_hash, role)
+VALUES 
+('Keerthika', '2003-12-09',21 , 'Chennai', '123456789012', 'ABCDE1234F', 'arun@gmail.com', 'hashed_pw_1', 'customer'),
+('Monisha', '1999-07-12',26 , 'Bangalore', '123456789013', 'ABCDE1235G', 'meena@gmail.com', 'hashed_pw_2', 'customer'),
+('Prasanna ', '1985-01-01', 40, 'Mumbai', '123456789014', 'ABCDE1236H', 'vikram@gmail.com', 'hashed_pw_3', 'customer'),
+('Sefika', '2000-10-10',25 , 'Delhi', '123456789015', 'ABCDE1237I', 'ravi@hexaware.com', 'hashed_pw_4', 'officer'),
+('Nikil', '1992-04-25', 33, 'Kolkata', '123456789016', 'ABCDE1238J', 'sneha@hexaware.com', 'hashed_pw_5', 'officer');
+
+INSERT INTO policies (name, vehicle_type, base_premium, description)
+VALUES 
+('Standard Car Insurance', 'car', 5000.00, 'Basic car insurance policy with third-party coverage.'),
+('Comprehensive Bike Plan', 'bike', 2000.00, 'Full coverage for bikes including theft and accident.'),
+('Truck Fleet Policy', 'truck', 15000.00, 'Covers fleet of commercial trucks.'),
+('Camper Van Protection', 'camper van', 8000.00, 'Covers damage, theft, and accidents for camper vans.'),
+('Premium Car Coverage', 'car', 10000.00, 'Enhanced coverage with add-ons for cars.');
+
+INSERT INTO policy_proposals (user_id, policy_id, vehicle_details, quote_amount, status)
+VALUES 
+(1, 1, 'Hyundai i20, 2019 model, Petrol', 5200.00, 'quote_generated'),
+(2, 2, 'Hero Splendor, 2021 model', 2100.00, 'active'),
+(3, 3, 'Tata Truck, 2018 model, Diesel', 15500.00, 'proposal_submitted'),
+(1, 5, 'Kia Seltos, 2023 model, Automatic', 10500.00, 'active'),
+(2, 4, 'Force Camper, 2017 model', 8200.00, 'expired');
+
+INSERT INTO documents (proposal_id, doc_type, file_path)
+VALUES 
+(1, 'RC Book', '/uploads/rc_1.pdf'),
+(2, 'License', '/uploads/license_2.pdf'),
+(3, 'Emission Certificate', '/uploads/emission_3.pdf'),
+(4, 'RC Book', '/uploads/rc_4.pdf'),
+(5, 'Vehicle Insurance History', '/uploads/prev_policy_5.pdf');
+
+INSERT INTO payments (proposal_id, amount_paid, status)
+VALUES 
+(1, 5200.00, 'paid'),
+(2, 2100.00, 'paid'),
+(3, 15500.00, 'pending'),
+(4, 10500.00, 'paid'),
+(5, 8200.00, 'paid');
+
+INSERT INTO notifications (user_id, message, type)
+VALUES 
+(1, 'Your policy quote has been generated. Please review.', 'quote'),
+(2, 'Your policy will expire in 7 days.', 'reminder'),
+(3, 'Proposal submitted successfully.', 'quote'),
+(1, 'Your policy document is ready for download.', 'policy_document'),
+(2, 'Thank you for your premium payment.', 'policy_document');
+
+INSERT INTO claims (proposal_id, user_id, claim_reason, status)
+VALUES 
+(2, 2, 'Bike skidded in rain, need repairs.', 'under_review'),
+(1, 1, 'Minor collision damage in parking.', 'initiated'),
+(4, 1, 'Theft reported for Kia Seltos.', 'approved'),
+(5, 2, 'Storm damage to camper van.', 'rejected'),
+(3, 3, 'Truck engine fire accident.', 'under_review');
