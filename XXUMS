@@ -1,0 +1,561 @@
+create or replace PACKAGE BODY      XXUMS_MONTH_ISSUE_PKG
+/*===========================================================================================+
+ | $ Source Control Info:
+ | File Name :XXUMS_MONTH_ISSUE_PKG_PB.pkb
+ | Version : 1.0
+ | Name of the Last developer : ACL
+ +===========================================================================================+
+ | PACKAGE         XXUMS_MONTH_ISSUE_PKG
+ |
+ | DESCRIPTION
+ |      This package is used by uniform Management System for Monthly Issuance Report.
+ |
+ | MODIFICATION HISTORY
+ | Date                  Author            Description of Changes
+ |  22-JAN-2016     ACL                Initial Version
+ |  04-DEC-2025     Keerthika R            Changes done as per SR 427686
+ *=============================================================================================*/
+AS
+
+/* procedure to write a line of text to a output file*/
+ PROCEDURE write_xml (p_mssg IN VARCHAR2)
+   AS
+   BEGIN
+      fnd_file.put_line (fnd_file.output, p_mssg);
+      DBMS_OUTPUT.put_line (p_mssg);
+   END;
+
+ /* procedure to write a line of text to a log file*/
+PROCEDURE write_log (p_mssg IN VARCHAR2)
+   AS
+   BEGIN
+      fnd_file.put_line (fnd_file.LOG, p_mssg);
+      DBMS_OUTPUT.put_line (p_mssg);
+   END;
+
+ /* Procedure to retrieve monthly issue uniform details*/
+ /*PROCEDURE XXUMS_MONTH_ISSUE_PRC(ERRBUF  OUT VARCHAR2,
+                                                             RETCODE OUT VARCHAR2, 
+                                                             p_from_date  VARCHAR2, 
+                                                             p_to_date VARCHAR2,
+                                                             p_department_id NUMBER,
+                                                             p_section_id NUMBER,
+                                                             p_payroll_id NUMBER,
+                                                             p_staff_category IN VARCHAR2)
+AS
+CURSOR cur_month_issue(from_date_cp  DATE, 
+                                      to_date_cp DATE,
+                                      department_id_cp NUMBER,
+                                      section_id_cp NUMBER,
+                                      payroll_id_cp NUMBER,
+                                      staff_category_cp  VARCHAR2) IS
+
+SELECT * FROM(SELECT xrsdt.ATTRIBUTE5,
+         TO_DATE(xrsdt.ACTION_DATE, 'DD-MON-RRRR') ACTION_DATE,
+         xrht.REQ_NUMBER,
+         xrsdt.attribute9 ITEM_SIZE,
+       (SELECT meaning
+         FROM fnd_lookup_values
+        WHERE lookup_type = 'XXUM_REQUEST_TYPES'
+            AND language = 'US'
+            AND lookup_code = xrht.req_type) transaction_type,
+         'OMAN AIR' staff_category,
+         papf.employee_number staff_number,
+         papf.full_name staff_name,
+         pap.name position_name,
+         (SELECT haou1.NAME
+            FROM hr_all_organization_units haou1,
+                 per_org_structure_elements pose,
+                 per_organization_structures pos
+           WHERE     1 = 1
+                 AND haou1.organization_id = pose.organization_id_parent
+                 AND pos.name = 'OA HQ Organization Hieararchy'
+                 AND pose.org_structure_version_id =
+                        pos.organization_structure_id
+                 AND pose.organization_id_child = haou.organization_id)
+            DEPARTMENT,
+         haou.NAME SECTION,
+          (SELECT haou1.organization_id
+            FROM hr_all_organization_units haou1,
+                 per_org_structure_elements pose,
+                 per_organization_structures pos
+           WHERE     1 = 1
+                 AND haou1.organization_id = pose.organization_id_parent
+                 AND pos.name = 'OA HQ Organization Hieararchy'
+                 AND pose.org_structure_version_id =
+                        pos.organization_structure_id
+                 AND pose.organization_id_child = haou.organization_id) department_id,
+         haou.organization_id section_id,
+         paaf.payroll_id,
+         (select payroll_name from pay_all_payrolls_f where payroll_id=paaf.payroll_id) payroll_name,
+         xrdt.item_code,
+         xrdt.item_description,
+         DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No') oman_air_inventory,
+         NVL(xrsdt.quantity_selected, 0) QUANTITY,
+         CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(msib.list_price_per_unit, 0) 
+         END unit_rate,
+          CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(xrsdt.quantity_selected, 0) * NVL(msib.list_price_per_unit, 0)  
+         END AMOUNT
+    FROM per_all_people_f papf,
+         per_all_assignments_f paaf,
+         per_all_positions pap,
+         xxum_request_details_tb xrdt,
+         xxum_request_sub_details_tb xrsdt,
+         hr_all_organization_units haou,
+         xxum_request_header_tb xrht,
+         mtl_system_items_b msib
+   WHERE 1 = 1 
+         AND papf.person_id = paaf.person_id
+         AND papf.person_id = xrht.person_id
+         AND xrht.req_header_id = xrdt.req_header_id
+         AND xrdt.req_details_id = xrsdt.req_details_id
+         AND xrsdt.req_sub_details_id = xrsdt.req_sub_details_id
+         AND xrsdt.attribute2 = 'INTERFACED'
+         AND xrht.req_type  IN ('YE','SP')
+         AND xrht.status IN ('IF', 'IP')
+         AND paaf.organization_id = haou.organization_id
+         AND paaf.position_id = pap.position_id
+         AND xrdt.item_description = msib.description
+         AND xrdt.item_code = msib.segment1
+         AND msib.organization_id = 86
+         AND TRUNC (xrht.req_date) BETWEEN papf.effective_start_date
+         AND papf.effective_end_date
+         AND TRUNC (xrht.req_date) BETWEEN paaf.effective_start_date
+         AND paaf.effective_end_date
+         AND papf.current_employee_flag = 'Y'
+         AND paaf.primary_flag = 'Y'
+         AND paaf.assignment_type = 'E'
+ UNION ALL
+ SELECT xrsdt.ATTRIBUTE5,
+            TO_DATE(xrsdt.ACTION_DATE, 'DD-MON-RRRR') ACTION_DATE,
+            xrht.REQ_NUMBER,
+            xrsdt.attribute9 ITEM_SIZE,
+            (SELECT meaning
+              FROM fnd_lookup_values
+            WHERE lookup_type = 'XXUM_REQUEST_TYPES'
+                AND language = 'US'
+                AND lookup_code = xrht.req_type) transaction_type,
+            xggs.attribute1 staff_category,
+            xggs.staff_number staff_number,
+            xggs.title||xggs.first_name||' '||xggs.last_name staff_name,
+            xggs.position position_name,
+            xggs.department DEPARTMENT,
+            xggs.department SECTION,
+            xggs.department_id, 
+            xggs.department_id section_id, 
+            0 payroll_id,
+            null payroll_name,
+            xrdt.item_code,
+            xrdt.item_description,
+           DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No') oman_air_inventory,
+         NVL(xrsdt.quantity_selected, 0) QUANTITY,
+         CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(msib.list_price_per_unit, 0) 
+         END unit_rate,
+          CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(xrsdt.quantity_selected, 0) * NVL(msib.list_price_per_unit, 0)  
+         END AMOUNT
+    FROM xxums.xxum_gsa_gha_staff xggs,
+         xxum_request_details_tb xrdt,
+         xxum_request_sub_details_tb xrsdt,
+         xxum_request_header_tb xrht,
+         mtl_system_items_b msib
+   WHERE 1 = 1 
+         AND xggs.person_id = xrht.person_id
+         AND xrht.req_header_id = xrdt.req_header_id
+         AND xrdt.req_details_id = xrsdt.req_details_id
+         AND xrsdt.req_sub_details_id = xrsdt.req_sub_details_id
+         AND xrsdt.attribute2 = 'INTERFACED'
+         AND xrht.req_type  IN ('YE','SP')
+         AND xrht.status IN ('IF', 'IP')
+         AND xrdt.item_description = msib.description
+         AND xrdt.item_code = msib.segment1
+         AND msib.organization_id = 86)
+ WHERE 1 = 1
+  AND action_date BETWEEN NVL(TO_DATE(from_date_cp, 'DD-MON-RRRR'),'01-JAN-1951')
+         AND NVL(TO_DATE(to_date_cp, 'DD-MON-RRRR'), '31-DEC-4712')
+ AND department_id = NVL(department_id_cp, department_id)
+ AND section_id = NVL(section_id_cp, section_id)
+ AND payroll_id= NVL(payroll_id_cp, payroll_id)
+ AND staff_category = NVL(staff_category_cp, staff_category)
+ ORDER BY ACTION_DATE DESC; */ --Commented as per SR 427686
+ 
+ /*Start of SR 427686*/
+ 
+ PROCEDURE XXUMS_MONTH_ISSUE_PRC(ERRBUF  OUT VARCHAR2,
+                                                             RETCODE OUT VARCHAR2, 
+                                                             p_from_date  VARCHAR2, 
+                                                             p_to_date VARCHAR2,
+                                                             p_employee_id NUMBER)
+AS
+CURSOR cur_month_issue(from_date_cp  DATE, 
+                                      to_date_cp DATE,
+                                      employee_id_cp NUMBER
+                                      ) IS
+
+SELECT * FROM(SELECT xrsdt.ATTRIBUTE5,
+         TO_DATE(xrsdt.ACTION_DATE, 'DD-MON-RRRR') ACTION_DATE,
+         xrht.REQ_NUMBER,
+         xrsdt.attribute9 ITEM_SIZE,
+       (SELECT meaning
+         FROM fnd_lookup_values
+        WHERE lookup_type = 'XXUM_REQUEST_TYPES'
+            AND language = 'US'
+            AND lookup_code = xrht.req_type) transaction_type,
+         'OMAN AIR' staff_category,
+         papf.employee_number staff_number,
+         papf.full_name staff_name,
+         papf.person_id,
+         pap.name position_name,
+         (SELECT haou1.NAME
+            FROM hr_all_organization_units haou1,
+                 per_org_structure_elements pose,
+                 per_organization_structures pos
+           WHERE     1 = 1
+                 AND haou1.organization_id = pose.organization_id_parent
+                 AND pos.name = 'OA HQ Organization Hieararchy'
+                 AND pose.org_structure_version_id =
+                        pos.organization_structure_id
+                 AND pose.organization_id_child = haou.organization_id)
+            DEPARTMENT,
+         haou.NAME SECTION,
+          (SELECT haou1.organization_id
+            FROM hr_all_organization_units haou1,
+                 per_org_structure_elements pose,
+                 per_organization_structures pos
+           WHERE     1 = 1
+                 AND haou1.organization_id = pose.organization_id_parent
+                 AND pos.name = 'OA HQ Organization Hieararchy'
+                 AND pose.org_structure_version_id =
+                        pos.organization_structure_id
+                 AND pose.organization_id_child = haou.organization_id) department_id,
+         haou.organization_id section_id,
+         paaf.payroll_id,
+         (select payroll_name from pay_all_payrolls_f where payroll_id=paaf.payroll_id) payroll_name,
+         xrdt.item_code,
+         xrdt.item_description,
+         DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No') oman_air_inventory,
+         NVL(xrsdt.quantity_selected, 0) QUANTITY,
+         CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(msib.list_price_per_unit, 0) 
+         END unit_rate,
+          CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(xrsdt.quantity_selected, 0) * NVL(msib.list_price_per_unit, 0)  
+         END AMOUNT
+    FROM per_all_people_f papf,
+         per_all_assignments_f paaf,
+         per_all_positions pap,
+         xxum_request_details_tb xrdt,
+         xxum_request_sub_details_tb xrsdt,
+         hr_all_organization_units haou,
+         xxum_request_header_tb xrht,
+         mtl_system_items_b msib
+   WHERE 1 = 1 
+         AND papf.person_id = paaf.person_id
+         AND papf.person_id = xrht.person_id
+         AND xrht.req_header_id = xrdt.req_header_id
+         AND xrdt.req_details_id = xrsdt.req_details_id
+         AND xrsdt.req_sub_details_id = xrsdt.req_sub_details_id
+         AND xrsdt.attribute2 = 'INTERFACED'
+         AND xrht.req_type  IN ('YE','SP')
+         AND xrht.status IN ('IF', 'IP')
+         AND paaf.organization_id = haou.organization_id
+         AND paaf.position_id = pap.position_id
+         AND xrdt.item_description = msib.description
+         AND xrdt.item_code = msib.segment1
+         AND msib.organization_id = 86
+         AND TRUNC (xrht.req_date) BETWEEN papf.effective_start_date
+         AND papf.effective_end_date
+         AND TRUNC (xrht.req_date) BETWEEN paaf.effective_start_date
+         AND paaf.effective_end_date
+         AND papf.current_employee_flag = 'Y'
+         AND paaf.primary_flag = 'Y'
+         AND paaf.assignment_type = 'E'
+ UNION ALL
+ SELECT xrsdt.ATTRIBUTE5,
+            TO_DATE(xrsdt.ACTION_DATE, 'DD-MON-RRRR') ACTION_DATE,
+            xrht.REQ_NUMBER,
+            xrsdt.attribute9 ITEM_SIZE,
+            (SELECT meaning
+              FROM fnd_lookup_values
+            WHERE lookup_type = 'XXUM_REQUEST_TYPES'
+                AND language = 'US'
+                AND lookup_code = xrht.req_type) transaction_type,
+            xggs.attribute1 staff_category,
+            xggs.staff_number staff_number,
+            xggs.title||xggs.first_name||' '||xggs.last_name staff_name,
+            xggs.person_id,
+            xggs.position position_name,
+            xggs.department DEPARTMENT,
+            xggs.department SECTION,
+            xggs.department_id, 
+            xggs.department_id section_id, 
+            0 payroll_id,
+            null payroll_name,
+            xrdt.item_code,
+            xrdt.item_description,
+           DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No') oman_air_inventory,
+         NVL(xrsdt.quantity_selected, 0) QUANTITY,
+         CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(msib.list_price_per_unit, 0) 
+         END unit_rate,
+          CASE WHEN  DECODE (xrsdt.attribute3, 'Y', 'Yes', 'No')  = 'Yes' THEN
+          (SELECT 0 FROM dual) 
+          ELSE
+           NVL(xrsdt.quantity_selected, 0) * NVL(msib.list_price_per_unit, 0)  
+         END AMOUNT
+    FROM xxums.xxum_gsa_gha_staff xggs,
+         xxum_request_details_tb xrdt,
+         xxum_request_sub_details_tb xrsdt,
+         xxum_request_header_tb xrht,
+         mtl_system_items_b msib
+   WHERE 1 = 1 
+         AND xggs.person_id = xrht.person_id
+         AND xrht.req_header_id = xrdt.req_header_id
+         AND xrdt.req_details_id = xrsdt.req_details_id
+         AND xrsdt.req_sub_details_id = xrsdt.req_sub_details_id
+         AND xrsdt.attribute2 = 'INTERFACED'
+         AND xrht.req_type  IN ('YE','SP')
+         AND xrht.status IN ('IF', 'IP')
+         AND xrdt.item_description = msib.description
+         AND xrdt.item_code = msib.segment1
+         AND msib.organization_id = 86)
+ WHERE 1 = 1
+  AND action_date BETWEEN NVL(TO_DATE(from_date_cp, 'DD-MON-RRRR'),'01-JAN-1951')
+         AND NVL(TO_DATE(to_date_cp, 'DD-MON-RRRR'), '31-DEC-4712')
+ AND person_id in  (select distinct person_id from
+(SELECT  papf.person_id
+  FROM per_all_people_f papf,
+       per_all_assignments_f paaf,
+       hr_all_organization_units haou
+ WHERE 1 = 1
+       AND SYSDATE BETWEEN papf.effective_start_date
+                       AND papf.effective_end_date
+       AND papf.person_id = paaf.person_id
+       AND papf.current_employee_flag = 'Y'
+       AND SYSDATE BETWEEN paaf.effective_start_date
+                       AND paaf.effective_end_date
+       AND paaf.primary_flag = 'Y'
+       AND paaf.assignment_type = 'E'
+       AND haou.organization_id = paaf.organization_id
+       AND paaf.organization_id IN
+              (SELECT pose.organization_id_child
+                 FROM hr_all_organization_units haou1,
+                      per_org_structure_elements pose,
+                      per_organization_structures pos
+                WHERE     1 = 1
+                      AND haou1.organization_id = pose.organization_id_parent
+                      AND pos.name = 'OA HQ Organization Hieararchy'
+                      AND pose.org_structure_version_id =
+                             pos.organization_structure_id
+                      AND pose.organization_id_parent =
+                             (SELECT pose.organization_id_parent
+                                FROM hr_all_organization_units haou1,
+                                     per_org_structure_elements pose,
+                                     per_organization_structures pos
+                               WHERE 1 = 1
+                                     AND haou1.organization_id =
+                                            pose.organization_id_child
+                                     AND pos.name =
+                                            'OA HQ Organization Hieararchy'
+                                     AND pose.org_structure_version_id =
+                                            pos.organization_structure_id
+                                     AND pose.organization_id_child =
+                                            (SELECT organization_id
+                                               FROM per_all_assignments_f
+                                              WHERE person_id = p_employee_id
+                                                    AND TRUNC (SYSDATE) BETWEEN effective_start_date
+                                                                            AND effective_end_date
+AND primary_flag = 'Y')))
+union
+SELECT  papf.person_id
+  FROM per_all_people_f papf,
+       per_all_assignments_f paaf,
+       hr_all_organization_units haou
+WHERE 1 = 1
+       AND SYSDATE BETWEEN papf.effective_start_date
+                       AND papf.effective_end_date
+       AND papf.person_id = paaf.person_id
+       AND papf.current_employee_flag = 'Y'
+       AND SYSDATE BETWEEN paaf.effective_start_date
+                       AND paaf.effective_end_date
+       AND paaf.primary_flag = 'Y'
+       AND paaf.assignment_type = 'E'
+       AND haou.organization_id = paaf.organization_id
+       AND paaf.organization_id IN
+              (SELECT pose.organization_id_child
+                 FROM hr_all_organization_units haou1,
+                      per_org_structure_elements pose,
+                      per_organization_structures pos
+                WHERE     1 = 1
+                      AND haou1.organization_id = pose.organization_id_parent
+                      AND pos.name = 'OA HQ Organization Hieararchy'
+                      AND pose.org_structure_version_id =
+                             pos.organization_structure_id
+                      AND pose.organization_id_parent = (SELECT organization_id
+                                               FROM per_all_assignments_f
+                                              WHERE person_id = p_employee_id 
+                                                    AND TRUNC (SYSDATE) BETWEEN effective_start_date
+                                                                            AND effective_end_date
+AND primary_flag = 'Y'))
+UNION
+SELECT  papf.person_id
+  FROM per_all_people_f papf, per_all_assignments_f paaf, hr_all_organization_units haou
+ WHERE 1 = 1
+       AND SYSDATE BETWEEN papf.effective_start_date
+                       AND papf.effective_end_date
+       AND papf.person_id = paaf.person_id
+       AND papf.current_employee_flag = 'Y'
+       AND SYSDATE BETWEEN paaf.effective_start_date
+                       AND paaf.effective_end_date
+       AND paaf.primary_flag = 'Y'
+       AND paaf.assignment_type = 'E'
+       AND paaf.organization_id=haou.organization_id
+       AND EXISTS
+              (SELECT 1
+                 FROM per_all_people_f papf, fnd_lookup_values flv1
+                WHERE papf.person_id = p_employee_id
+                      AND papf.employee_number = flv1.meaning
+                      AND TRUNC (SYSDATE) BETWEEN effective_start_date
+                                              AND effective_end_date
+                      AND current_employee_flag = 'Y'
+                      AND flv1.lookup_type = 'XXUMS_ADMIN'
+                      AND flv1.language = 'US')))
+ ORDER BY ACTION_DATE DESC;
+ 
+ /*End of SR SR 427686*/
+
+
+      l_date VARCHAR2(20);
+      cp_from_date DATE;
+      cp_to_date DATE;
+      lc_amount NUMBER:=0;
+     l_department VARCHAR2(250);
+     l_section VARCHAR2(250);
+     l_payroll VARCHAR2(250);
+     l_staff_category  VARCHAR2(20);
+     
+        BEGIN
+         write_xml ('<?xml version="1.0" encoding = "WINDOWS-1252"?>');
+         write_xml ('<G_MONTHLY_ISSUANCE_HEADER_INFO1>');
+           cp_from_date:=fnd_date.canonical_to_date(p_from_date);
+           cp_to_date:=fnd_date.canonical_to_date(p_to_date);
+
+               BEGIN
+                    SELECT TO_CHAR (SYSDATE, 'DD-MON-RRRR') INTO l_date FROM DUAL;
+                    /*  IF p_department_id IS NOT NULL THEN
+                     SELECT name INTO l_department  FROM XXUMS_ALL_DEPARTMENTS WHERE organization_id = p_department_id;
+                    ELSE
+                      l_department := 'All';
+                    END IF;
+                    
+                      IF p_section_id IS NOT NULL THEN
+                     SELECT name INTO l_section  FROM XXUMS_ALL_DEPARTMENTS WHERE organization_id = p_section_id;
+                    ELSE
+                      l_section := 'All';
+                    END IF;
+                    
+                      IF p_payroll_id IS NOT NULL THEN
+                     SELECT payroll_name INTO l_payroll  FROM XXUMS_PAYROLL_NAMES WHERE payroll_id = p_payroll_id;
+                    ELSE
+                      l_payroll := 'All';
+                    END IF;
+                    
+                     IF p_staff_category IS NOT NULL THEN
+                      l_staff_category := p_staff_category;
+                    ELSE
+                      l_staff_category := 'All';
+                    END IF; */  --Commented as per SR 427686
+                 END;
+
+                    write_xml ('<DATE>'|| l_date ||'</DATE>');
+                    write_log('System Date: '||l_date );
+                    write_xml ('<P_FROM>' || NVL(TO_CHAR(cp_from_date, 'DD-MON-RRRR'),'01-JAN-1951')|| '</P_FROM>');
+                    write_log('From Date: '||NVL(TO_CHAR(cp_from_date, 'DD-MON-RRRR'),'01-JAN-1951') );
+                    write_xml ('<P_TO>' ||NVL(TO_CHAR(cp_to_date, 'DD-MON-RRRR'),'31-DEC-4712')|| '</P_TO>');
+                    write_log('To Date: '||NVL(TO_CHAR(cp_to_date, 'DD-MON-RRRR'),'31-DEC-4712') );
+                   /* write_xml ('<P_DEP>' ||  '<![CDATA[' ||l_department || ']]>'  || '</P_DEP>');
+                    write_log ('Department' || l_department );
+                    write_xml ('<P_SEC>' ||  '<![CDATA[' ||l_section || ']]>'  || '</P_SEC>');
+                    write_log ('Section' || l_section );
+                    write_xml ('<P_PAY>' ||  '<![CDATA[' ||l_payroll || ']]>'  || '</P_PAY>');
+                    write_log ('Payroll Name' || l_payroll );
+                    write_xml ('<SCATE>' ||  '<![CDATA[' ||l_staff_category || ']]>'  || '</SCATE>');
+                    write_log ('Staff Category' || l_staff_category );
+
+                    FOR rec IN cur_month_issue(cp_from_date, cp_to_date, p_department_id, p_section_id, p_payroll_id, p_staff_category)*/ --Commented as per SR 427686
+                     FOR rec IN cur_month_issue(cp_from_date, cp_to_date, p_employee_id) ----added as per SR 427686
+                    LOOP
+                      BEGIN
+
+                            write_log('Inside Loop1');
+                            write_xml ('<G_MONTHLY_ISSUANCE_HEADER_INFO2>');
+                            write_xml('<VOUCH>'|| '<![CDATA[' ||rec.ATTRIBUTE5|| ']]>' ||'</VOUCH>');
+                            write_log('Vou Num: '||rec.ATTRIBUTE5 );
+                            write_xml('<ISSUE_DAT>'|| '<![CDATA[' ||rec.ACTION_DATE|| ']]>' ||'</ISSUE_DAT>');
+                            write_log('Issue Date: '||rec.ACTION_DATE);
+                            write_xml('<REQ_NUM>'|| '<![CDATA[' ||rec.REQ_NUMBER|| ']]>' ||'</REQ_NUM>');
+                            write_log('Req Num: '||rec.REQ_NUMBER );
+                             write_xml('<SIZE>'|| '<![CDATA[' ||rec.ITEM_SIZE|| ']]>' ||'</SIZE>');
+                            write_log('Item Size: '||rec.ITEM_SIZE );
+                            write_xml('<T_TYPE>' || '<![CDATA[' ||rec.transaction_type|| ']]>' || '</T_TYPE>');
+                            write_log('Transaction Type: '||rec.transaction_type);
+                            write_xml('<EMP_NO>'|| '<![CDATA[' ||rec.staff_number|| ']]>' ||'</EMP_NO>');
+                            write_log('Emp No: '||rec.staff_number );
+                            write_xml('<EMP_NAM>'|| '<![CDATA[' ||rec.staff_name|| ']]>' ||'</EMP_NAM>');
+                            write_log('Emp Name: '||rec.staff_name );
+                            write_xml('<DEPT>'|| '<![CDATA[' ||rec.DEPARTMENT|| ']]>' ||'</DEPT>');
+                            write_log('Dept: '||rec.DEPARTMENT );
+                             write_xml('<SEC>'|| '<![CDATA[' ||rec.SECTION|| ']]>' ||'</SEC>');
+                            write_log('SECTION: '||rec.SECTION);
+                            write_xml('<POS>' || '<![CDATA[' ||rec.position_name|| ']]>' || '</POS>');
+                            write_log('Position: '||rec.position_name);
+                            write_xml('<SCAT>' || '<![CDATA[' ||rec.staff_category|| ']]>' || '</SCAT>');
+                            write_log('Staff Category : '||rec.staff_category);
+                            write_xml('<PAY>' || '<![CDATA[' ||rec.payroll_name|| ']]>' || '</PAY>');
+                            write_log('Payroll Name : '||rec.payroll_name); 
+                            write_xml('<I_CODE>' || '<![CDATA[' ||rec.item_code  || ']]>' || '</I_CODE>');
+                            write_log('Item Code: '|| rec.item_code );
+                            write_xml('<I_DES>' || '<![CDATA[' || rec.item_description  || ']]>' || '</I_DES>');
+                            write_log('Item Descr: '|| rec.item_description);
+                            write_xml('<OMAN_I>' || '<![CDATA[' || rec.oman_air_inventory  || ']]>' || '</OMAN_I>');
+                            write_log('Oman Air Inventory: '|| rec.oman_air_inventory);
+                            write_xml('<QTY>' || '<![CDATA[' ||rec.QUANTITY || ']]>' || '</QTY>');
+                            write_log('Quantity: '||rec.QUANTITY );
+                            write_xml('<UNIT>' || '<![CDATA[' || TO_CHAR(NVL(rec.unit_rate,0),'9,999,990.000') || ']]>' || '</UNIT>');
+                            write_log('Unit Rate: '|| TO_CHAR(NVL(rec.unit_rate,0),'9,999,990.000') );
+                            write_xml('<T_AMT>' || '<![CDATA[' ||TO_CHAR(NVL(rec.AMOUNT,0),'9,999,990.000') || ']]>' || '</T_AMT>');
+                            write_log('Total Amount: '||TO_CHAR(NVL(rec.AMOUNT,0),'9,999,990.000') );
+                            lc_amount :=  lc_amount + to_number(rec.AMOUNT);
+                            write_xml('</G_MONTHLY_ISSUANCE_HEADER_INFO2>');
+                            write_log('Outside Loop1');
+                          EXCEPTION WHEN OTHERS THEN
+                          write_xml('</G_MONTHLY_ISSUANCE_HEADER_INFO2>');
+                          write_log('ERROR IN XML TAGS'||' '||SQLERRM);
+                         END;
+                     END LOOP;
+                      write_xml('<TT_AMT>' || '<![CDATA[' ||TO_CHAR(NVL(lc_amount,0),'9,999,990.000') || ']]>' || '</TT_AMT>');
+                            write_log('T Total Amount: '||TO_CHAR(NVL(lc_amount,0),'9,999,990.000') );
+                      write_xml('</G_MONTHLY_ISSUANCE_HEADER_INFO1>');
+                        EXCEPTION WHEN OTHERS THEN
+                          write_xml('</G_MONTHLY_ISSUANCE_HEADER_INFO1>');
+                          write_log('ERROR IN UNIFORM_ENT_REPORT_PRC'||' '||SQLERRM);
+                     END XXUMS_MONTH_ISSUE_PRC;
+
+END XXUMS_MONTH_ISSUE_PKG;
