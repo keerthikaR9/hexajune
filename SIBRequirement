@@ -1,0 +1,95 @@
+1.	Requirement Summary
+
+Omanair wants to integrate ERP payments with Bank Sohar. Payments will be created in ERP and file will be generated as per the format provided by Bank Sohar and it will be validated, encrypted and transmitted to Bank Sohar through SFTP. 
+2.	Solution
+1.	Bank Sohar accounts will be maintained in a lookup and payment file will consider only these bank accounts. Business team needs to maintain this lookup (addition/modification/Deletion)
+2.	CSV type of payment file will be generated for the Bank Sohar accounts
+3.	All the required validations will be done. If there are any issues, payment program log file will display the errors
+4.	Once validation is successful, file will be encrypted and sent to the Bank Sohar server using SFTP.
+5.	File will be processed by Bank. If approval is needed, Omanair team needs to approve the same in the Bank portal
+
+3.	File Name Structure
+<Customer Reference>_<Entity Reference>_<Applicant Reference>_<Accounting Type>_<Processing Type>_<Customers Own File Name>.csv
+S. No 	Field Name 	Mandatory /Length 	Remarks 	Comments
+1 	Customer Reference 	M 	This value will be customer reference as maintained in the banks system. To be provided by the bank. 	Bank to provide the details
+2 	Entity Reference 	M 	This value will be entity (subsidiary) reference as maintained in the banks system. To be provided by the bank. 	Bank to provide the details
+3 	Applicant reference 	M 	This value will be applicant reference as maintained in the banks system. To be provided by the bank. 	Bank to provide the details
+4 	Accounting Type 	M / 250	2 types of accounting types are supported
+1. MDMC
+2. SDMC
+
+MDMC – Multiple Debit Multiple Credit will ensure that the transactions in the batch are debited to the customer account one by one 
+SDMC – Single Debit Multi Credit will ensure that the customer account is debited with the consolidated amount of the complete batch. Account statement will reflect one single debit entry at a batch level 
+For processing salary transactions above 20,000 OMR (per record) this value will be “ SAL” 	MDMC (Business to confirm)
+5 	Processing Type 	M 	2 types of processing are supported 
+1. STP 
+2. NSTP 
+
+NSTP – means that the transaction once uploaded via H2H will have to be authorized by the company on the digital platform of the bank before it gets processed. 
+STP – means that the transaction once uploaded via H2H will get processed without manual authorization on the digital platform 	NSTP (Business to confirm)
+6 	Customer Defined File Name 	M 	File name of customer choice for reference 	BS_<Date and Time>
+7 	File Extension 	M / 3	CSV or csv 	csv
+
+4.	Payments File Format
+Payment file will be in CSV format with below details
+S. No 	Field Name 	Mandatory / Len / Type 	File Descriptions 	Comments
+1 	DebitAccount 	M  / 34 / Alphanumeric	Account number should be populated without any hyphen, space or special character. Any leading or trailing zeroes must also be populated. 	Ok
+2 	DebitCurrency 	M / 3 / Alpha	Currency codes must adhere to ISO 4217 	Bank Account Currency
+Will foreign currency payments done from OMR account?
+3 	ValueDate 	M / 10 / DD/MM/YYYY 	Value date of the payments in DD /MM/ YYYY format. Value date should not be less than the file creation date and not less than the current date. The date difference between the File Creation date and the value date cannot be greater than 5 days 	Users can enter the value date when batch payment is done. If value date is not provided by the users, then current date will be considered
+4 	CreditAccount 	M / 35 / Alphanumeric	Please populate account number without any hyphens, spaces or any special characters. For IBAN countries (example Saudi, Bahrain, UAE, Kuwait, Europe) please populate IBAN. 	If IBAN is available, it will be used. If IBAN is null, then local account number will be used
+5 	TransferAmount 	M / 12,3 / Numeric with Decimal	Payment amount in Debit account currency with decimal based on currency. 
+Amount should be populated without any separators like comma. 
+Example: OMR 1000.000 or USD 1000.00 	Payment Amount
+If payment is done for foreign currency payments in OMR account, then what should be the payment amount?
+6 	Bulk Cust Ref id 	O / 35 / Alphanumeric	Customer File Reference Number. 	< Blank >
+7 	Charge Type 	C / 3 / Alpha	SHA for charge shared 
+OUR for all charges to ordering party 
+Charge type is Mandatory if transaction type is MT103 (Foreign Currency Transfers). 	OUR
+Business to confirm
+8 	Transfer Purpose 	C / 35 / Alphanumeric	Mandatory if receiving account is in UAE, CHINA and INDIA. List of purpose codes available in Annexure 	Users will be able to select the purpose code in Payment Batch
+What should be the default purpose code for UAE, China and India?
+9 	Ben bank swift BIC code 	C / 11 / Alphanumeric	Beneficiary SWIFT Address is Mandatory if transaction type is MT103 	Swift code will be sent
+10 	Branch Code 	O / 5 / Alphanumeric	Beneficiary bank branch code 	< Blank >
+11 	BankCode 	O / 6 / Alphanumeric		< Blank >
+12 	BeneficiaryName 	M / 35 / Alphanumeric	This field is MANDATORY and should specify the name of the party who will ultimately receive the funds (No special characters). 	Vendor Name without special char
+13 	beneficiary reference 	O / 12 / Alphanumeric	Max of 12 Digit, it has to be unique in the file 	< Blank >
+14 	bulk reference 	O / 35 / Alphanumeric	File ID Max of 35 Digit, it has to be the same throughout the file 	< Blank >
+15 	FT cust ref id 	O / 35 / Alphanumeric	This field can be used to input customer’s own unique reference number for each transaction which is required in the account statement for reconciliation 	Payment voucher number will be sent
+16 	CBO/Main Transfer of Purpose 	M / 70 / Alphanumeric  	CBO Purpose code. 	Not clear. To discuss with business team/Bank
+17 	Payment details to ben 	O / 143 / Alphanumeric	This field can be used input the additional details to beneficiary. 	Invoice numbers separated by “/” upto 143 char. Business team to confirm
+18 	PaymentCurrency 	C / 3 / Alpha	Currency codes must adhere to ISO 4217 	Invoice/Payment currency
+19 	ben branch name 	O / 35 / Alphanumeric	Beneficiary Branch Name 	< Blank >
+20 	ben bank name 	O / 35 / Alphanumeric	Beneficiary Bank Name 	< Blank >
+21 	ben address line 1 	C / 33 / Alphanumeric	Beneficiary Address Line 1 	Beneficiary Address Line 1
+22 	ben address line 2 	O / 33 / Alphanumeric	Beneficiary Address Line 2 	Beneficiary Address Line2 (if available)
+23 	ben address 3(city) 	C / 30 / Alphanumeric	Beneficiary Address Line 3 	Beneficiary City
+24 	ben bank address line 1 	O / 35 / Alphanumeric	Beneficiary Bank Address Line 1 	< Blank >
+25 	ben bank country 	O / 2 / Alpha	Mention country code 
+Country code must adhere to ISO 3166 standard 	< Blank >
+26 	notify ben 	O / 1 / Alpha	Beneficiary Notification enable flag. 
+Yes = Y 
+No = N 	< Blank >
+27 	notify ben email 	O / 254 / Alphanumeric	Beneficiary Email address with “;” separated each email address maximum length 35 character. 	< Blank >
+28 	notify ben choice 	O / 35 / Alphanumeric	Beneficiary secondary Email address 
+Only one email address is allowed in this field 	< Blank >
+29 	ben branch address1 	O / 35 / Alphanumeric	Optional Field 	< Blank >
+30 	ben branch address2 	O / 35 / Alphanumeric	Optional Field 	< Blank >
+31 	ben branch address3(city) 	O / 35 / Alphanumeric	Optional Field 	< Blank >
+32 	Service Code 	C / 11 / Alphanumeric	IFSC Code mandatory for payment to INDIA and Sort Code Mandatory for transfers to Great Britain. 
+INR – IFSC Code 
+GBP – Sort Code 	For INR payments, IFSC code and for GBP payments, Sort code will be sent. 
+33	     SERVICEFX	C / 35 / Decimal	Mandatory if the transaction is to be processed with a transaction specific special rate taken from the treasury. Enter rate as provided by the treasury 	Business to confirm if any special rate is used for Sohar Bank
+34	Rate Code 	C / 35 / Alphanumeric	Mandatory if the transaction is to be processed with a transaction specific special rate taken from the treasury. Enter the rate code as provided by treasury 	Business to confirm if any special rate is used for Sohar Bank
+35 	Number of Records 	O / 6 / Numeric		< Blank >
+36 	Batch Header ID 	O / 35 / Alphanumeric		< Blank >
+37 	R1 	O / 35 / Alphanumeric		< Blank >
+38 	R2 	O / 35 / Alphanumeric		< Blank >
+39 	R3 	O / 35 / Alphanumeric		< Blank >
+40 	R4 	O / 35 / Alphanumeric		< Blank >
+41 	R5 	O / 35 / Alphanumeric		< Blank >
+42 	R6 	O / 35 / Alphanumeric		< Blank >
+43 	R7 	O / 35 / Alphanumeric		< Blank >
+44 	R8 	O / 35 / Alphanumeric		< Blank >
+45 	R9 	O / 35 / Alphanumeric		< Blank >
+
