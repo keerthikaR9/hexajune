@@ -1,0 +1,44 @@
+CREATE OR REPLACE PACKAGE XXOA_AP_SIB_PAYMT_OUTB AS
+---------------------------------------------------------------------------
+-- 2026, Oman Air. All rights reserved.
+---------------------------------------------------------------------------
+-- File name                : XXOA_AP_SIB_PAYMT_OUTB
+-- Author                   : Keerthika R , Hexaware Technologies
+-- Date                     : 22-MAR-2026
+-- Language                 : English
+-- Module                   : AP
+--
+-- Client                   : Oman Air
+--
+-- Description              : Package for Generating Payment details file and transfer to the Bank server for SIB (Sohar International Bank)
+--
+--
+-- Change History Information
+-- --------------------------
+-- Version  Date         Author                Change Reference / Description
+-- -------  -----------  ---------------       -------------------------------
+-- 1.0      22-MAR-2026  Keerthika.R             Initial Version
+---------------------------------------------------------------------------
+
+
+PROCEDURE OUTBOUND_VALIDATION(
+      ERRBUF OUT VARCHAR2,
+      RETCODE OUT VARCHAR2,
+      P_BATCH IN NUMBER );
+
+PROCEDURE INSERT_PYMT_DATATOSTG(
+      P_BATCH IN NUMBER,
+      P_RECORD_COUNT OUT NUMBER,
+      P_REQUEST_ID IN NUMBER );
+
+PROCEDURE PAYMENT_VALI_FAILURE_DET_EMAIL(
+      P_REQUEST_ID IN NUMBER );
+
+PROCEDURE ERROR_RECORDS_ARCHIVE_INS(
+      P_REQUEST_ID IN NUMBER );
+
+PROCEDURE XXOA_INBOUND_ACK_INS(
+      P_FILE_PATH IN VARCHAR2,
+      P_FILE_NAME IN VARCHAR2 );
+
+END XXOA_AP_SIB_PAYMT_OUTB;
