@@ -1,0 +1,82 @@
+REM ****************************************************************************
+REM Title        To Create staging table
+REM File         XXOA_PAYMENT_OU_SIB_STG.dba.sql
+REM Parameters   None
+REM History
+REM Date         Who             Description
+REM -----------  ------------    ----------------------------------------
+REM 22-Mar-2026	 Keerthika     To Create staging table
+REM *****************************************************************************
+
+SPOOL XXOA_PAYMENT_OU_SIB_STG.sql.txt;
+SET SERVEROUTPUT ON;
+  --------------------------------------------------------
+--  DDL for Table XXOA_PAYMENT_OU_SIB_STG
+--------------------------------------------------------
+
+CREATE TABLE "XXOA"."XXOA_PAYMENT_OU_SIB_STG" 
+(DEBIT_ACCOUNT             VARCHAR2(40),
+DEBIT_CURRENCY                VARCHAR2(3),   
+VALUE_DATE                    DATE,
+CREDIT_ACCOUNT                VARCHAR2(40),
+TRANSFER_AMOUNT               NUMBER, 
+BULKCUSTREFID                 VARCHAR2(50),
+CHARGETYPE                    VARCHAR2(3),
+TRANSFERPURPOSE               VARCHAR2(50),
+BENBANKSWIFTBICCODE           VARCHAR2(50),
+BRANCHCODE                    VARCHAR2(10),
+BANKCODE                      VARCHAR2(10),
+BENEFICIARYNAME               VARCHAR2(50),
+BENEFICIARYREFERENCE          VARCHAR2(50),
+BULKREFERENCE                 VARCHAR2(50),
+FTCUSTREFID                   VARCHAR2(100),
+CBO                           VARCHAR2(100),
+PAYMENTDETAILS                VARCHAR2(200),
+PAYMENTCURRENCY               VARCHAR2(50),
+BENBRANCHNAME                 VARCHAR2(100),
+BENBANKNAME                   VARCHAR2(100),
+BENADDRESSLINE1               VARCHAR2(100),
+BENADDRESSLINE2               VARCHAR2(100),
+BENADDRESSLINE3               VARCHAR2(100),
+BENBANKADDRESSLINE3           VARCHAR2(100),
+BENBANKCOUNTRY                VARCHAR2(50),
+NOTIFYBEN                     VARCHAR2(10),
+NOTIFYBENEMAIL                VARCHAR2(300),
+NOTIFYBENCHOICE               VARCHAR2(50),
+BENBRANCHADDRESS1             VARCHAR2(100),
+BENBRANCHADDRESS2             VARCHAR2(100),
+BENBRANCHADDRESSCITY3         VARCHAR2(100),
+SERVICECODE                   VARCHAR2(50),
+SERVICEFX                     NUMBER,
+RATECODE                      VARCHAR2(50),
+NUMBEROFRECORDS               NUMBER,
+BATCHHEADERID                 VARCHAR2(50),
+R1                            VARCHAR2(100),
+R2                            VARCHAR2(100),
+R3                            VARCHAR2(100),
+R4                            VARCHAR2(100),
+R5                            VARCHAR2(100),
+R6                            VARCHAR2(100),
+R7                            VARCHAR2(100),
+R8                            VARCHAR2(100),
+R9                            VARCHAR2(100),
+FILE_NAME                     VARCHAR2(300), 
+CHECKRUN_ID                   NUMBER, 
+CHECKRUN_NAME                 VARCHAR2(100),  
+BANK_NAME                     VARCHAR2(100), 
+BANK_COUNTRY                  VARCHAR2(100),
+VALIDATION_STATUS             VARCHAR2(50),  
+VALIDATION_REMARKS            VARCHAR2(200), 
+REQUEST_ID                    NUMBER,        
+RECORD_COUNT                  NUMBER,        
+RETCODE                       NUMBER)SEGMENT CREATION IMMEDIATE 
+  PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 
+ NOCOMPRESS LOGGING
+  STORAGE(INITIAL 65536 NEXT 1048576 MINEXTENTS 1 MAXEXTENTS 2147483645
+  PCTINCREASE 0 FREELISTS 1 FREELIST GROUPS 1
+  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)
+  TABLESPACE "XXOA" ;
+
+create   or replace synonym apps.XXOA_PAYMENT_OU_SIB_STG  for xxoa.XXOA_PAYMENT_OU_SIB_STG;
+
+SPOOL OFF;
