@@ -1,0 +1,97 @@
+1	USER DESCRIPTION OF THE PROBLEM
+
+Issue Headline:
+Implementation of Oman Arab Bank Payment Interface to ERP
+
+Description:
+Oman Air wants to automate the payment processing with Oman Arab bank (H2H integration). Once payment is created and formatted, the payment format file in a predefined csv format will be created and the same will be sent to OAB server. Once the file is received in the landing directory, the file will be parsed for any errors and the successful records will be processed for payments. Error files will be created during payment processing stage and are available for taking appropriate action
+
+
+
+2	HEXAWARE UNDERSTANDING OF THE SR
+
+Oman Air wants to automate the payment processing with Oman Arab Bank. Once payment is created and formatted, the format file in a predefined CSV format will be created in a specific directory. This payment file will be transferred to a specific directory in bank server through SFTP transfer protocol.
+3	HEXAWARE SOLUTION
+1.	After the payment is completed, a new “CSV Payment Format” file will be created as per the format given by OAB. If payment is done to the OAB or any other local bank, then Local CSV format will be used. If payment is for the international bank account, then international CSV format will be used. Payment batch name or quick payment reference will be used to create the CSV file
+2.	Once the file is ready, it will be encrypted and then sent to the bank server through SFTP connection.
+3.	OA authorized person will login to the OAB portal and approve the payment
+4.	Payment file will be processed by bank. If there are any error while processing payments, then errors will be sent to the designated staffs for taking appropriate action
+Payment to OAB bank or any Local Bank in Oman
+If payment is made to the OAB or any other local bank in Oman, then Local CSV format will be used. If one payment batch contains both local bank payment and the international payment, then 2 separate files will be created.
+Field Name 	Field Description 	Mandatory 	Hexaware Comments
+Template Number 	Number '9 ' as a numerical character should be used	Yes 	“9” will be used.
+Date	Executed date (Payment date)	Yes 	Payment date in DD/MM/YYYY format
+Bank SWIFT Code	Beneficiary Bank SWIFT/BIC Code 	Yes 	Swift/BIC code should exist for the beneficiary bank account/Branch
+Credit account number	Beneficiary's Account Number (Without space or special characters)	Yes	
+Amount	Amount to be remitted	Yes	
+Currency	Currency of Payment	Yes	
+Beneficiary Name	Beneficiary's Name (Without special characters). Max of 30 Char	Yes	Vendor Name
+Purpose of Payment	Purpose of payment/transfer code (As per the list given below)	Yes	999 will be used
+Purpose of Payment codes
+DESCRIPTION	CODE
+School fees	108
+Utility bills	109
+Rent or lease	110
+Membership fees 	111
+Loan disbursement	112
+Mortgage installment	113
+Insurance payment	114
+Interest payment	115
+Market Shares payment	116
+Others	999
+
+Payment to International Banks or Foreign Currency Payments
+For payments to international banks or foreign currency payment, International CSV format will be used.
+Field name	Description	Length	Comments
+Debit account	Debit account number (Without space or special characters)	13	
+Value Date	Executed date (Payment date)	10	
+Bene Bank SWIFT Code	Beneficiary Bank SWIFT/BIC Code	11	Swift/BIC code should exist for the beneficiary bank account/Branch
+Bene Account Number	Beneficiary's Account/IBAN Number (Without space or special characters)	35	If IBAN exists, then IBAN number will be used. If IBAN does not exist, then account number will be used
+Transfer Amount	Amount to be remitted	10	
+Bene Acct Currency	Beneficiary Account Currency (Mandatory if Paying to Beneficiary in India & Canada only)	3	
+Beneficiary Name	Beneficiary's Name (Without special characters)	35	Vendor Name
+Bene Address Line 1	Address 1st line (Without special characters)	30	
+Bene Address Line 2	Address 2nd line (Without special characters), Mandatory if Paying to Beneficiary in India & Canada. (keep it blank for other country).	35	
+Bene Post Code	Mandatory if Paying to Beneficiary in India & Canada (keep it blank for other country).	5	
+Beneficiary Country	Enter full country name in upper case		
+Purpose	Purpose of payment/transfer code (As per the list)	3	219 for Vendor Payments
+Beneficiary Email	Beneficiary's E-Mail	45	If not available, a default email id will be used
+Charge Type	All charges on Remitter	3	OUR
+Payment Reference	If Purpose of Payment used as (999), then this field should be used/enter the Purpose of Payment. (Without special characters)	30	
+Transfer Currency	Currency of Payment	3	
+Narration line 1	Purpose of Payment	35	If Narration1 is not entered in the payment DFF, then “NA” will be used
+Narration line 2	Purpose of Payment	35	If Narration2 is not entered in the payment DFF, then “NA” will be used
+
+
+
+
+
+
+DESCRIPTION	CODE
+Family Support	201
+Educational Expenses	202
+Medical Expense	203
+Credit Card Payment	205
+Purchase Of Assets	206
+Alimonies	209
+Court Order	210
+Government payment	211
+Custom Duties	212
+Deposit operations	213
+Allowances	214
+Dividend	215
+Bills to Vendor / Company	219
+Others	999
+
+Details awaited from OA
+1.	Default purpose of payment should be finalized. If purpose of payment is 999, then value for payment reference should be finalized
+4	ASSUMPTIONS
+1.	If one payment batch contains payment for Local and international banks, then 2 payment files will be created, one for local bank and another for international bank.
+2.	Bank will provide the test server to test the automatic file transfer and payment processing
+3.	SFTP file transfer is possible between ERP server and the OAB server and vice versa
+4.	If Email ID is not available for the vendor, then a default email id will be used (no-reply@omanair.com)
+5.	Either Swift code or BIC exists for the beneficiary bank account in ERP
+6.	Bank charge type “OUR” will be used.
+7.	DFF fields will be provided for Narration1 and Narration2. If these values are not entered while processing payment, then default values (NA) will be used.
+8.	In case of any error while processing payment, error will be sent to the OA business team. Payment will be voided in ERP and then re-process the payment after correcting the errors.
+
