@@ -1,0 +1,64 @@
+1	USER DESCRIPTION OF THE PROBLEM
+
+Issue Headline:
+Implementation of Payment integration between NBO and ERP.
+
+Description:
+Oman Air wants to automate the payment processing with NBO. Once payment is created and formatted, the format file in a predefined csv format will be sent to NBO SFTP server automatically through SFTP protocol after encryption. Once the file is received in the landing directory in Bank Server, the file will be uploaded into the portal for approval. Approval will be done in the Bank portal. Once file is approved, it will be parsed for any errors and the successful records will be processed for payments. Error files will be sent to the predefined email ids for further action.
+2	HEXAWARE UNDERSTANDING OF THE SR
+
+Oman Air wants to automate the payment processing with NBO. Once payment is created and formatted, the format file in a predefined CSV format will be created in a specific directory. This payment file will be transferred to a specific directory in bank server through SFTP transfer protocol after encryption.
+Once the payment file is received by the bank in the specific format, the file will be processed. If there are any errors, error details will be sent to the business team for next action.
+
+3	HEXAWARE SOLUTION
+1.	A new lookup will be created and the NBO related bank accounts will be maintained in this lookup. Business team (Superuser) can add or modify the bank accounts.
+2.	After the payment is completed (for the bank accounts defined in the lookup), a new “CSV Payment Format” file will be created as per the format given by NBO. 
+3.	Payment File Transmission program will be developed to generate the payment file, encrypt and transfer the file to NBO Server. All the payments that were not sent will be included in the file. This program can also be scheduled in the steady state.
+4.	Once the file is ready in ERP, it will be encrypted and then sent to the bank server through SFTP connection.
+5.	No approval will be done in ERP and approval workflow needs to be setup in the NBO banking portal
+6.	Payment file will be processed by the bank and if there are any errors, then error details will be sent to business team through a group email id. Group Email id setup/Bank portal configurations will be taken care by OA IT/Business team
+7.	In case of any errors during payment processing, business team will take correction action and then re-process the payment again.
+
+Header
+Sr No	XML Node	Mandatory / Optional	Max Length	ERP Field Mapping
+1	DebitAcNum	M	30	Internal Bank Account Number
+2	ValueDate	M	8	Payment Date – Needs Confirmation from Business
+3	TransferType	M	2	Constant value – 11 (Vendor Payments)
+4	BenBankSWIFTCode	M	12	Swift code from Vendor Bank Account
+5	BenAccountNo	M	30	If IBAN is available, then IBAN will be considered, else local Account number will be considered
+6	Amount	M	15	Payment Amount
+7	TransferCurrency	M	3	Payment Currency
+8	BenName	O/M	70	First 70 char of Vendor Name. If there are any special char in the vendor name, it will be replaced with space char
+9	BenAdd1	O/M	35	First 35 char of vendor address will be sent.
+1.	If there are any special char, then it will be replaced with space
+2.	If no address is available, then “NA” will be sent
+10	BenAdd2	O	35	Blank
+11	BenAdd3	O	35	Blank
+12	BenBranchName	O	20	Vendor Bank Account Branch Name – First 20 char will be sent
+13	PaymentDetails	O	140	All Invoice details upto 140 char will be sent,
+Ex: Invoice1-Invoice2-Invoice3
+14	Narration1	O	35	Payment Voucher Number will be sent
+15	Narration2	O	35	Payment Document Number will be sent
+16	Narration3	O	35	Payment Batch Name upto 35 char will be sent
+17	MobileNo	O	15	Blank
+18	EMailID	O	35	If vendor email id is available and within 35 char, then it will be sent, else it will be blank
+19	BenBankSplCode	O	35	Sort code or IFSC code, if available, will be sent
+20	SplInstruction	M (Only for foreign Currency)	35	Purpose Code
+21	BenNationality	M (Only for foreign Currency)	1	Lookup details needed
+22	BenEconomicActivity	M (Only for foreign Currency)	2	Lookup details needed
+
+4	ASSUMPTIONS
+1.	Value date will be defaulted to system date when payment is processed. If required, users can change this date.
+2.	Vendor bank details are updated in the Vendor master and no validation will be done in this interface
+3.	No inbound files processing is required. Error files will be sent to the business team to take necessary action.
+4.	Connectivity between ERP TEST server and NBO TEST server will be available for testing purpose.
+5.	Data clean-up, if needed, should be done by business users manually.
+
+Questions to NBO
+1.	SplInstruction – Details needed from Bank
+2.	BenNationality – Details needed from Bank
+3.	BenEconomicActivity – Details needed from Bank
+4.	Is date format should always be DDMMYYYY
+5.	Purpose and Economic activity are not available in ERP. Is any default value ok?
+
+
