@@ -1,0 +1,974 @@
+create or replace PACKAGE BODY XXOA_AP_MUSCAT_PAYMT_OUTB
+AS
+  ---------------------------------------------------------------------------
+  -- 2025, Hexaware Technologies . All rights reserved.
+  ---------------------------------------------------------------------------
+  -- File name                : XXOA_AP_MUSCAT_PAYMT_OUTB
+  -- Author                   : Ravikumar V R , Hexaware Technologies
+  -- Date                     : 16-Sep-2025
+  -- Language                 : English
+  -- Module                   : AP
+  -- Doc Ref(s)               :
+  --
+  -- Client                   : Oman Air
+  --
+  -- Description              : Package for Generating Payment details file and transfer to the Bank server for Bank Muscat
+  --
+  --
+  -- Change History Information
+  -- --------------------------
+  -- Version  Date         Author                Change Reference / Description
+  -- -------  -----------  ---------------       -------------------------------
+  -- 1.0      16-Sep-2025  Ravikumar V R           Initial Version
+  -- 1.1      08-Oct-2025  Dhruv Sinha             Updated version
+  ---------------------------------------------------------------------------
+  PROCEDURE outbound_validation(
+      errbuf OUT VARCHAR2,
+      retcode OUT VARCHAR2,
+      P_BATCH IN NUMBER )
+  IS
+    -----------------------------------------------------------------------------
+    -- Cursor for getting payment batches
+    ------------------------------------------------------------------------------
+    CURSOR rec_payment_batch_cur
+    IS
+      SELECT DISTINCT CHECKRUN_NAME,
+        DECODE(BEN_NATIONALITY,'OM','OM','FC') BEN_NATIONALITY -- FC is Forign country
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE CHECKRUN_ID = P_BATCH
+      AND FILE_NAME    IS NULL;
+
+	  CURSOR rec_ptm_heading_cur IS
+	  SELECT  'H'
+        || CHR (44)
+        || 'File Type'
+        || CHR (44)
+        || 'Value Date'
+         heading_Section
+
+      FROM DUAL;
+    ----------------------------------------------------------------------------------
+    -- Cursor for Getting CSV format for payment to Bank Muscat or any Local Bank in Oman
+    ----------------------------------------------------------------------------------
+    CURSOR csv_data_cur_om (p_request_id NUMBER, p_ben_country VARCHAR2)
+    IS
+      SELECT  unique 'H'
+        || CHR (44)
+        || 'BVP'
+        || CHR (44)
+        || VALUE_DATE  header_Section ,
+        CHECKRUN_NAME
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE CHECKRUN_ID     = P_BATCH
+      AND REQUEST_ID        = p_request_id
+      AND NVL(RETCODE,'0') <> '1';
+    ------------------------------------------------------------------------------------------------
+    -- Cursor for Getting CSV format for payment to line level Payments
+    ------------------------------------------------------------------------------------------------
+    CURSOR csv_data_cur_int (p_request_id NUMBER)
+    IS
+      SELECT Field_Name_codes
+        || CHR (44)
+        || DEBIT_ACCOUNT_ID
+        || CHR (44)
+        || TRAN_CURRENCY_W
+        || CHR (44)
+        || sum(AMOUNT_W)
+        || CHR (44)
+        || CREDIT_ACCOUNT_ID
+        || CHR (44)
+        || VENDOR_CODE line_Section,
+        CHECKRUN_NAME
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE CHECKRUN_ID     = P_BATCH
+      AND REQUEST_ID        = p_request_id
+      AND NVL(RETCODE,'0') <> '1'
+	  group by CHECKRUN_NAME ;
+    ------------------------------------------------------------------------------
+    -- Cursor for Getting Payment Data
+    ------------------------------------------------------------------------------
+    CURSOR rec_payment_data_cur(p_request_id NUMBER, p_ben_country VARCHAR2)
+    IS
+      SELECT *
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE REQUEST_ID               = p_request_id
+      AND BEN_NATIONALITY            = p_ben_country
+      AND FILE_NAME                 IS NULL
+      AND Validation_status         IS NULL
+      AND Validation_remarks        IS NULL;
+    l_validation_status VARCHAR2(1) := 'S';
+    l_err_msg           VARCHAR2(4000);
+    l_record_count      NUMBER := 0;
+    l_record_count1     NUMBER := 0;
+    l_record_count2     NUMBER := 0;
+    l_record_count3     NUMBER := 0;
+    l_parent_request_id NUMBER;
+    l_request_id        NUMBER;
+    l_stg_record_count  NUMBER;
+    l_ben_country       VARCHAR2(100);
+    l_file UTL_FILE.file_type;
+    l_file_name          VARCHAR2 (100);
+    l_batch              VARCHAR2(100);
+    l_file_path          VARCHAR2 (200);
+    l_file_count         NUMBER;
+    l_valid              VARCHAR2(10):= 'N';
+    v_step               NUMBER      := 0;
+    l_clear_prefix       VARCHAR2(100);
+    failure_validation   EXCEPTION;
+    l_transfer_method    VARCHAR2(100);
+    l_iban               VARCHAR2(100);
+    l_sort_code          VARCHAR2(100);
+    l_swift              VARCHAR2(100);
+    l_shr_file_path      VARCHAR2(100);
+    l_retcode            NUMBER := 0;
+    l_seq_no             NUMBER := 000;
+    l_batch_count        NUMBER := 0;
+    l_count              NUMBER := 0;
+    l_count1             NUMBER := 0;
+    l_count2             NUMBER := 0;
+    l_count3             NUMBER := 0;
+    l_user_id            NUMBER := FND_PROFILE.VALUE('USER_ID');--101413;
+    l_resp_id            NUMBER := 50209;
+    l_resp_appl_id       NUMBER := 200;
+    l_attribute_category VARCHAR2(200);
+    L_NAME               VARCHAR2(100);
+    l_purposecode        VARCHAR2(100);
+    --    l_beneconomic_activity VARCHAR2(100);
+    l_bank_account_name VARCHAR2(100);
+    l_bank_name         VARCHAR2(360);
+    L_FLAG              NUMBER := 0;
+  BEGIN
+    BEGIN
+      fnd_file.put_line (fnd_file.LOG, '----------Inserting Records to Stg table start  ------------');
+      l_parent_request_id := fnd_global.conc_request_id;
+      l_batch             := p_batch;
+      fnd_file.put_line (fnd_file.LOG, 'p_batch'||'  '||p_batch);
+      fnd_file.put_line (fnd_file.LOG, 'l_parent_request_id'||'  '||l_parent_request_id);
+      Insert_pymt_datatostg (l_batch,l_stg_record_count,l_parent_request_id); --calling insert to insert the values
+      ----Outbound Validation Start----
+      fnd_file.put_line (fnd_file.LOG, '----------Outbound Validation Start  ------------');
+      BEGIN
+        COMMIT;
+        ----Validation Start-----
+        FOR r1 IN rec_payment_data_cur(l_parent_request_id, l_ben_country)
+        LOOP
+          l_flag              := 1;
+          l_validation_status := 'S';
+          l_batch_count       := 0;
+          l_count             := 0;
+          l_count1            := 0;
+          l_count2            := 0;
+          l_count3            := 0;
+          l_purposecode       := NULL;
+          --IF(l_ben_country = 'OM') THEN
+          BEGIN
+            SELECT COUNT(*)
+            INTO l_batch_count
+            FROM XXOA_PAYMENT_OU_MUSCAT_STG
+            WHERE CHECKRUN_NAME   = R1.CHECKRUN_NAME
+            AND VALIDATION_STATUS = 'S'
+            AND REQUEST_ID       <> l_parent_request_id;
+          EXCEPTION
+          WHEN OTHERS THEN
+            dbms_output.put_line ('NO DATA FOUND FOR VALIDATION RECORDS'||SQLERRM);
+          END;
+          IF l_batch_count       > 0 THEN
+            l_validation_status := 'F';
+            l_err_msg           := l_err_msg||CHR(10)||'Payment Batch Already Exists'||CHR(59);
+            fnd_file.put_line (fnd_file.LOG, 'Payment Batch Already Exists: '|| r1.CHECKRUN_NAME);
+            RETCODE   := 1;
+            l_retcode := 1;
+          END IF;
+          ------------End-------
+          ----Mandatory Validaiton start-----
+          IF r1.VALUE_DATE      IS NULL OR r1.BENBANKSWIFTCODE IS NULL OR r1.CREDIT_ACCOUNT_ID IS NULL OR r1.AMOUNT_W IS NULL OR r1.TRAN_CURRENCY_W IS NULL OR r1.VENDOR_CODE IS NULL THEN
+            l_validation_status := 'F';
+            RETCODE             := 1;
+            l_retcode           := 1;
+            l_err_msg           := l_err_msg||CHR(10)||'Mandatory Fields cannot be null '||CHR(59);
+            fnd_file.put_line (fnd_file.LOG, 'Mandatory Fields cannot be null  :'|| r1.CHECKRUN_NAME);
+            IF r1.VALUE_DATE IS NULL THEN
+              l_err_msg      := l_err_msg||CHR(10)||'VALUE_DATE'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'VALUE_DATE IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.BENBANKSWIFTCODE IS NULL THEN
+              l_err_msg            := l_err_msg||CHR(10)||'BENBANKSWIFTCODE'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'BENBANKSWIFTCODE IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.CREDIT_ACCOUNT_ID IS NULL THEN
+              l_err_msg             := l_err_msg||CHR(10)||'CREDIT_ACCOUNT_ID'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'CREDIT_ACCOUNT_ID IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.AMOUNT_W IS NULL THEN
+              l_err_msg    := l_err_msg||CHR(10)||'AMOUNT'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'AMOUNT IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.TRAN_CURRENCY_W IS NULL THEN
+              l_err_msg           := l_err_msg||CHR(10)||'TRAN_CURRENCY_W'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'TRAN_CURRENCY_W IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.VENDOR_CODE IS NULL THEN
+              l_err_msg       := l_err_msg||CHR(10)||'VENDOR_CODE'||CHR(59);
+              fnd_file.put_line (fnd_file.LOG, 'VENDOR_CODE IS NULL: '|| r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
+          IF l_validation_status = 'F' THEN
+            UPDATE XXOA_PAYMENT_OU_MUSCAT_STG
+            SET VALIDATION_STATUS  = 'F',
+              VALIDATION_REMARKS   = l_err_msg,
+              RETCODE              =l_retcode
+            WHERE checkrun_id      = r1.checkrun_id
+            AND REQUEST_ID         = r1.request_id
+            AND VALIDATION_STATUS IS NULL;
+          ELSE
+            UPDATE XXOA_PAYMENT_OU_MUSCAT_STG
+            SET VALIDATION_STATUS  = 'S',
+              VALIDATION_REMARKS   = NULL ,
+              RETCODE              = '0'
+            WHERE checkrun_id      = P_BATCH
+            AND REQUEST_ID         = l_parent_request_id
+            AND RETCODE           IS NULL
+            AND VALIDATION_STATUS IS NULL ;
+            COMMIT;
+          END IF;
+          --        END LOOP;
+          IF l_flag = 0 THEN
+            fnd_file.put_line (fnd_file.LOG, 'There Are No records in stg to process. No records inserted in staging.. please contact IT service desk to debug the issue');
+          END IF;
+        END LOOP;
+      END;
+      --------end OutBound Validation-----------------
+      BEGIN
+        l_seq_no := 0;
+        FOR payment_batch IN rec_payment_batch_cur
+        LOOP
+          fnd_file.put_line (fnd_file.LOG,'CSV file Generation process start for the Payment Reference Number:'||'  '||payment_batch.CHECKRUN_NAME);
+          BEGIN
+            SELECT COUNT(CHECKRUN_NAME)
+            INTO l_record_count
+            FROM XXOA_PAYMENT_OU_MUSCAT_STG
+            WHERE checkrun_id     = P_BATCH
+            AND REQUEST_ID        = l_parent_request_id
+            AND VALIDATION_STATUS = 'F';
+            IF l_record_count     > 0 THEN
+              L_VALID            := 'N' ;
+            ELSE
+              L_VALID := 'Y';
+            END IF;
+            IF L_VALID     = 'Y' THEN
+              l_file_name := NULL;
+              BEGIN
+                SELECT directory_path
+                INTO l_file_path
+                FROM DBA_DIRECTORIES
+                WHERE directory_name = 'XXOA_MUSCAT_REQ';
+              EXCEPTION
+              WHEN NO_DATA_FOUND THEN
+                fnd_file.put_line (fnd_file.LOG, 'NO DATA FOUND IN DBA_DIRECTORIES: '|| SQLERRM);
+                l_file_path := NULL;
+              WHEN OTHERS THEN
+                fnd_file.put_line (fnd_file.LOG, 'EXCEPTION IN -DBA_DIRECTORIES-OTHERS: '|| SQLERRM);
+                l_file_path := NULL;
+              END;
+              l_seq_no    := l_seq_no +1;
+              l_file_name := 'OA_MUSCAT_AP_PAYMENT_'|| TO_CHAR(SYSDATE,'DDMMYYHH24MISS')||l_seq_no|| '.csv';
+              fnd_file.put_line (fnd_file.LOG,'FileName:' || l_file_name);
+              dbms_output.put_line ('FileName:' || l_file_name);
+              BEGIN
+                l_file := UTL_FILE.fopen ('XXOA_MUSCAT_REQ', l_file_name, 'W');
+                dbms_output.put_line ('Open File');
+              EXCEPTION
+              WHEN OTHERS THEN
+                dbms_output.put_line ('error in opening file'||SQLERRM);
+              END;
+
+			   FOR csv_heading_om IN rec_ptm_heading_cur LOOP
+			   UTL_FILE.put (l_file, csv_heading_om.heading_Section);
+			   UTL_FILE.put (l_file, CHR (10));
+			   END LOOP;
+              IF payment_batch.BEN_NATIONALITY = 'OM' THEN
+                FOR csv_data_om IN csv_data_cur_om(l_parent_request_id, l_ben_country)
+                LOOP
+                  UTL_FILE.put (l_file, csv_data_om.header_section);
+                  UTL_FILE.put (l_file, CHR (10));
+                  UPDATE XXOA_PAYMENT_OU_MUSCAT_STG
+                  SET FILE_NAME       = l_file_name
+                  WHERE CHECKRUN_NAME = csv_data_om.CHECKRUN_NAME
+                    -- AND BEN_NATIONALITY = 'OM'
+                  AND request_id = l_parent_request_id;
+                  UPDATE ap.ap_checks_all aca
+                  SET aca.attribute_category                                                             = 'OAB EBanking_Confirmation',
+                    aca.attribute1                                                                       = 'OAB-TRF',
+                    aca.attribute7                                                                       = TO_CHAR (TRUNC (SYSDATE), 'DD-MON-YYYY'),
+                    aca.last_update_login                                                                = fnd_global.login_id,
+                    aca.last_update_date                                                                 = SYSDATE,
+                    aca.last_updated_by                                                                  = fnd_global.user_id
+                  WHERE DECODE(SUBSTR(trim(aca.checkrun_name),1,5),'Quick',aca.check_id,aca.checkrun_id) = P_BATCH;
+                  COMMIT;
+                END LOOP;
+                FOR csv_data_int IN csv_data_cur_int(l_parent_request_id)
+                LOOP
+                  UTL_FILE.put (l_file, csv_data_int.line_Section);
+                  UTL_FILE.put (l_file, CHR (10));
+                  UPDATE XXOA_PAYMENT_OU_MUSCAT_STG
+                  SET FILE_NAME       = l_file_name
+                  WHERE CHECKRUN_NAME = csv_data_int.CHECKRUN_NAME
+                    --AND BEN_NATIONALITY <> 'OM'
+                  AND request_id = l_parent_request_id;
+                  UPDATE ap.ap_checks_all aca
+                  SET aca.attribute_category                                                             = 'OAB EBanking_Confirmation',
+                    aca.attribute1                                                                       = 'OAB-TRF',
+                    aca.attribute7                                                                       = TO_CHAR (TRUNC (SYSDATE), 'DD-MON-YYYY'),
+                    aca.last_update_login                                                                = fnd_global.login_id,
+                    aca.last_update_date                                                                 = SYSDATE,
+                    aca.last_updated_by                                                                  = fnd_global.user_id
+                  WHERE DECODE(SUBSTR(trim(aca.checkrun_name),1,5),'Quick',aca.check_id,aca.checkrun_id) = P_BATCH;
+                  COMMIT;
+                END LOOP;
+              END IF;
+              UTL_FILE.fclose (l_file);
+              fnd_file.put_line (fnd_file.LOG,'File has been created Successfully for the paymentref-  : '||l_file_name ||' under the path   : '||l_file_path);
+            ELSE
+              RETCODE :=1;
+              L_VALID := 'N';
+              UPDATE XXOA_PAYMENT_OU_MUSCAT_STG
+              SET VALIDATION_STATUS = 'F',
+                RETCODE             = '1'
+              WHERE checkrun_id     = P_BATCH
+              AND REQUEST_ID        = l_parent_request_id ;
+              fnd_file.put_line (fnd_file.LOG, 'No Valid records For Processing'||'  '||payment_batch.CHECKRUN_NAME||', so the file creation process not done');
+            END IF;
+            fnd_file.put_line (fnd_file.LOG, '---------------------------------------------');
+          EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line (fnd_file.LOG, 'IN FILE CREATION EXCEPTION:'||SQLCODE || ':::' || SUBSTR (SQLERRM, 1, 200));
+          END;
+        END LOOP;
+        v_step :=12;
+        fnd_file.put_line (fnd_file.LOG, '');
+        fnd_file.put_line (fnd_file.LOG, '-----------.CSV file Generation Process end----------------');
+        fnd_file.put_line (fnd_file.LOG, '');
+        COMMIT;
+        payment_Vali_failure_det_email(l_parent_request_id);
+        l_file_count := 0;
+        error_records_archive_ins(l_parent_request_id);
+        SELECT COUNT(*)
+        INTO l_file_count
+        FROM XXOA_PAYMENT_OU_MUSCAT_STG
+        WHERE request_id = l_parent_request_id
+        AND file_name   IS NOT NULL;
+        fnd_file.put_line (fnd_file.LOG, 'L_VALID:  '||L_VALID ||'  l_file_count:   '||l_file_count );
+        IF l_file_count > 0 AND L_VALID = 'Y' THEN
+          l_request_id := NULL;
+          -- Call  Concurrent Program for sending files to SFTP Server
+          BEGIN--RAVIKUMAR PENDING
+            fnd_global.apps_initialize(l_user_id, l_resp_id, l_resp_appl_id);
+            l_shr_file_path:='/EBSapps/appl/ap/12.0.0/bin/XXOA_AP_MUSCAT_BANK_SFTP.properties';
+            l_request_id   := fnd_request.submit_request ( application => 'XXOA', program => 'XXOA_AP_OAB_BANK_SFTP', --'XXOA_AHLI_BANK_SFTP',
+            description => NULL, start_time => NULL, sub_request => FALSE, argument1 => l_shr_file_path );
+            IF l_request_id = 0 THEN
+              fnd_file.put_line (fnd_file.LOG,'Concurrent request failed to submit');
+            ELSE
+              fnd_file.put_line (fnd_file.LOG,'Successfully Submitted the Concurrent Request');
+            END IF;
+            --
+          EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line (fnd_file.LOG,'Error While Submitting Concurrent Request '||TO_CHAR(SQLCODE)||'-'||sqlerrm);
+          END;
+          COMMIT;
+        END IF;
+        BEGIN
+          SELECT DISTINCT cba.bank_account_name,
+            hp.party_name
+          INTO l_bank_account_name,
+            l_bank_name
+          FROM ap_checks_all ac,
+            ce_bank_acct_uses_all cbu,
+            ce_bank_accounts cba,
+            hz_parties hp
+          WHERE ac.ce_bank_acct_use_id                                                      = cbu.bank_acct_use_id
+          AND cbu.bank_account_id                                                           = cba.bank_account_id
+          AND cba.bank_id                                                                   = hp.party_id
+          AND DECODE(SUBSTR(trim(ac.checkrun_name),1,5),'Quick',ac.check_id,ac.checkrun_id) = P_BATCH;
+          fnd_file.put_line (fnd_file.LOG,'Bank Account Name : ' || l_bank_account_name);
+          fnd_file.put_line (fnd_file.LOG,'Bank Name : ' || l_bank_name);
+        END;
+      EXCEPTION
+      WHEN OTHERS THEN
+        fnd_file.put_line (fnd_file.LOG, 'EXCEPTION in csv :' || SQLCODE || ':::' || SUBSTR(sqlerrm,1,200) );
+      END;
+    END;
+  EXCEPTION
+  WHEN OTHERS THEN
+    fnd_file.put_line (fnd_file.LOG, '');
+    fnd_file.put_line (fnd_file.LOG,'IN MAIN EXCEPTION:'||SQLCODE || ':::' || v_step || SUBSTR (SQLERRM, 1, 200));
+  END outbound_validation;
+  PROCEDURE Insert_pymt_datatostg(
+      P_BATCH IN NUMBER,
+      P_record_count OUT NUMBER,
+      P_request_id IN NUMBER )
+  IS
+    l_attribute_category VARCHAR2(100);
+    l_ext_bank_acct_id   NUMBER;
+    l_swift_code         VARCHAR2(150);
+    l_remit_account_name VARCHAR2(80);
+    l_check_count        NUMBER := 0;
+    l_count              NUMBER := 0;
+    l_ben_country        VARCHAR2(100);
+    l_batch              NUMBER;
+    l_request_id         NUMBER;
+    l_country_count      NUMBER := 0;
+    CURSOR cur_insert(P_BATCH NUMBER, p_request_id NUMBER)
+    IS
+
+	SELECT DISTINCT 'H' Header,
+        to_char(ch.check_date,'YYYYMMDD')  value_date,
+        suppl_bank.BeneficiaryBankBICCode benbankswiftcode,
+        ba.BANK_ACCOUNT_NUM debit_acct_no,
+        --        '11' transfer_type,
+        CASE
+        WHEN suppl_bank.BeneficiaryAccountCountry = 'OM' THEN to_char(suppl_bank.BeneficiaryAccountNumber)
+        ELSE NVL(suppl_bank.iban_code,to_char(suppl_bank.BeneficiaryAccountNumber))
+        END benaccountno,                                                                       --IBAN
+        ch.AMOUNT AMOUNT_W,                                                                       -- payment amount
+        suppl_bank.BeneficiaryAccountCurrency BENECURRENCY,                                     -- payment currency
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryName,'[^0-9A-Za-z]', ' '),1,70) benname,    --beneficiary name
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryAddress,'[^0-9A-Za-z]', ' '),1,35) benadd1, --beneficiary address first 35 char
+        CASE 
+        WHEN REPLACE(suppl_bank. BeneficiaryAccountCountry, ',', '') IN ('IN', 'CA') THEN REPLACE(suppl_bank. BeneficiaryAddressLine2, ',', '') 
+        ELSE '' 
+        END AS benadd2,
+        CASE
+        WHEN suppl_bank.BeneficiaryAccountCountry IN ('IN', 'CA') THEN suppl_bank.BeneficiaryZip
+        ELSE ''
+        END benadd3,
+        suppl_bank.BeneficiaryAccountCountry BEN_NATIONALITY,
+        (SELECT UPPER(SUBSTR(REGEXP_REPLACE(NVL(SUBSTR(description, 1, INSTR(description, '(') - 1), DESCRIPTION), '[,]', ' '), 1, 35))
+        FROM FND_TERRITORIES_TL
+        WHERE LANGUAGE     = 'US'
+        AND TERRITORY_CODE = suppl_bank.BeneficiaryAccountCountry
+        ) BEN_COUNTRY_NAME,
+
+      SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryEmail,',', ' '),1,35) emailid, -- beneficiary email
+      'OUR' CHARGE_TYPE,
+
+      '' paymentdetails,
+      ch.CURRENCY_CODE TRANSFER_CURRENCY,
+
+      '' file_name,
+      DECODE(SUBSTR(trim(ch.checkrun_name),1,5),'Quick',ch.check_id,ch.checkrun_id) checkrun_id,
+      ch.checkrun_name checkrun_name,
+      br.bank_name bank_name,
+      br.BANK_HOME_COUNTRY bank_country,
+      '' validation_status,
+      '' validation_remarks,
+      p_request_id request_id,
+      '' record_count,
+      '' retcode,
+      suppl_bank.ext_bank_account_id
+    FROM ap_checks_all ch ,
+      ce_bank_accounts ba ,
+      ce_bank_acct_uses_all cbau ,
+      ce_bank_branches_v br ,
+      ap_invoice_payments_all aipa ,
+      ap.ap_invoices_all aia ,
+      ap.ap_inv_selection_criteria_all aisca,
+      iby_payments_all ipa ,
+     -- fnd_lookup_values flv,
+      (SELECT aps.vendor_name BeneficiaryName,
+        ass.ADDRESS_LINE1 BeneficiaryAddress,
+        ass.ADDRESS_LINE2 BeneficiaryAddressLine2,
+        ass.ADDRESS_LINE3 BeneficiaryAddressLine3,
+        ass.CITY,
+        ass.STATE,
+        ass.ZIP BeneficiaryZip, 
+        hcp.email_address BeneficiaryEmail ,
+        ieb.bank_account_num BeneficiaryAccountNumber ,
+        ieb.bank_account_name BeneficiaryAccountName ,
+        ass.country BeneficiaryAccountCountry ,
+        ieb.iban iban_code ,
+        ieb.ext_bank_account_id ,
+        ieb.currency_code BeneficiaryAccountCurrency ,
+        SUBSTR(ieb.attribute1,1,11) BeneficiaryBankBICCode ,
+        NVL(ieb.attribute3,ieb.attribute2) BeneficiaryIFSCCode, --SUBSTR(ieb.attribute1,'1',INSTR(ieb.attribute1,'XX')-1) BeneficiaryBankBICCode
+        party_bank.party_name BeneficiaryBankName ,
+        branch_prof.organization_name BeneficiaryBranchName ,
+        iep.ext_payee_id ,
+        iep.payee_party_id
+      FROM hz_parties party_supp ,
+        ap_suppliers aps ,
+        hz_party_sites site_supp ,
+        ap_supplier_sites_all ass ,
+        iby_external_payees_all iep ,
+        iby_pmt_instr_uses_all ipi ,
+        iby_ext_bank_accounts ieb ,
+        hz_parties party_bank ,
+        hz_parties party_branch ,
+        hz_organization_profiles bank_prof ,
+        hz_organization_profiles branch_prof ,
+        hz_contact_points hcp
+      WHERE party_supp.party_id      = aps.party_id
+      AND party_supp.party_id        = site_supp.party_id
+      AND site_supp.party_site_id    = ass.party_site_id
+      AND ass.vendor_id              = aps.vendor_id
+      AND iep.payee_party_id         = party_supp.party_id
+      AND iep.party_site_id          = site_supp.party_site_id
+      AND iep.supplier_site_id       = ass.vendor_site_id
+      AND iep.ext_payee_id           = ipi.ext_pmt_party_id(+)
+      AND ipi.instrument_id(+)       = ieb.ext_bank_account_id
+      AND ieb.bank_id                = party_bank.party_id
+      AND ieb.branch_id              = party_branch.party_id
+      AND party_branch.party_id      = branch_prof.party_id
+      AND party_bank.party_id        = bank_prof.party_id
+      AND site_supp.party_site_id    = hcp.owner_table_id(+)
+      AND hcp.contact_point_type (+) = 'EMAIL'
+      AND hcp.status (+)             = 'A'
+      AND hcp.owner_table_name (+)   = 'HZ_PARTY_SITES'
+      AND hcp.primary_flag (+)       = 'Y'
+      ) suppl_bank
+    WHERE ch.ce_bank_acct_use_id          = cbau.bank_acct_use_id
+    AND cbau.bank_account_id              = ba.bank_account_id
+    AND ba.bank_branch_id                 = br.branch_party_id
+    AND ch.check_id                       = aipa.check_id
+    AND ch.checkrun_id                    = aisca.checkrun_id(+)
+    AND aia.invoice_id                    = aipa.invoice_id
+    AND ch.payment_id                     = ipa.payment_id
+    AND ipa.payments_complete_flag        = 'Y'
+    AND suppl_bank.payee_party_id(+)      = ipa.payee_party_id
+    AND suppl_bank.ext_bank_account_id(+) = ch.external_bank_account_id
+    AND suppl_bank.ext_payee_id(+)        = ipa.ext_payee_id
+   -- AND ch.attribute_category            IS NULL   testing 
+    --AND flv.lookup_type                   = 'XXOA_MUSCAT_EBANKING_BANK_ACC' ---'XXOA_AH_EBANKING_BANK_ACCOUNT'
+   -- AND flv.enabled_flag                  = 'Y'
+   -- AND UPPER (flv.attribute_category)    = UPPER ('EBanking Bank Accounts')
+      -- AND flv.description > '05- APR-2021'
+   -- AND UPPER (br.bank_name)                                                          = UPPER (flv.attribute1)
+    --AND UPPER (ch.bank_account_name)                                                  = UPPER (flv.attribute2)
+   -- AND flv.language                                                                  = 'US'
+    AND ch.status_lookup_code                                                         ='NEGOTIABLE'
+--    AND DECODE(SUBSTR(trim(ch.checkrun_name),1,5),'Quick',ch.check_id,ch.checkrun_id) = 'FARIDA_3SEP25_OMR-BM' 
+      AND ch.checkrun_name ='HANAOKA_PAR_USD' --'FARIDA_3SEP25_OMR-BM'
+    AND ch.org_id = cbau.org_id
+    AND ch.org_id = aipa.org_id
+    AND  UPPER(BANK_NAME) LIKE '%MUSCAT%';
+--    ORDER BY ch.check_id;
+
+      /*SELECT DISTINCT 'H' Header,
+        ch.check_date value_date,
+        suppl_bank.BeneficiaryBankBICCode benbankswiftcode,
+        ba.BANK_ACCOUNT_NUM debit_acct_no,
+        --        '11' transfer_type,
+        CASE
+          WHEN suppl_bank.BeneficiaryAccountCountry = 'OM'
+          THEN TO_CHAR(suppl_bank.BeneficiaryAccountNumber)
+          ELSE NVL(suppl_bank.iban_code,TO_CHAR(suppl_bank.BeneficiaryAccountNumber))
+        END benaccountno,                                                                       --IBAN
+        ch.AMOUNT AMOUNT_W,                                                                     -- payment amount
+        suppl_bank.BeneficiaryAccountCurrency BENECURRENCY,                                     -- payment currency
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryName,'[^0-9A-Za-z]', ' '),1,70) benname,    --beneficiary name
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryAddress,'[^0-9A-Za-z]', ' '),1,35) benadd1, --beneficiary address first 35 char
+        CASE
+          WHEN REPLACE(suppl_bank. BeneficiaryAccountCountry, ',', '') IN ('IN', 'CA')
+          THEN REPLACE(suppl_bank. BeneficiaryAddressLine2, ',', '')
+          ELSE ''
+        END AS benadd2,
+        CASE
+          WHEN suppl_bank.BeneficiaryAccountCountry IN ('IN', 'CA')
+          THEN suppl_bank.BeneficiaryZip
+          ELSE ''
+        END benadd3,
+        suppl_bank.BeneficiaryAccountCountry BEN_NATIONALITY,
+        (SELECT UPPER(SUBSTR(REGEXP_REPLACE(NVL(SUBSTR(description, 1, INSTR(description, '(') - 1), DESCRIPTION), '[,]', ' '), 1, 35))
+        FROM FND_TERRITORIES_TL
+        WHERE LANGUAGE     = 'US'
+        AND TERRITORY_CODE = suppl_bank.BeneficiaryAccountCountry
+        ) BEN_COUNTRY_NAME,
+      SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryEmail,',', ' '),1,35) emailid, -- beneficiary email
+      'OUR' CHARGE_TYPE,
+      '' paymentdetails,
+      ch.CURRENCY_CODE TRANSFER_CURRENCY,
+      '' file_name,
+      DECODE(SUBSTR(trim(ch.checkrun_name),1,5),'Quick',ch.check_id,ch.checkrun_id) checkrun_id,
+      ch.checkrun_name checkrun_name,
+      br.bank_name bank_name,
+      br.BANK_HOME_COUNTRY bank_country,
+      '' validation_status,
+      '' validation_remarks,
+      p_request_id request_id,
+      '' record_count,
+      '' retcode,
+      suppl_bank.ext_bank_account_id
+    FROM ap_checks_all ch ,
+      ce_bank_accounts ba ,
+      ce_bank_acct_uses_all cbau ,
+      ce_bank_branches_v br ,
+      ap_invoice_payments_all aipa ,
+      ap.ap_invoices_all aia ,
+      ap.ap_inv_selection_criteria_all aisca,
+      iby_payments_all ipa ,
+      fnd_lookup_values flv,
+      (SELECT aps.vendor_name BeneficiaryName,
+        ass.ADDRESS_LINE1 BeneficiaryAddress,
+        ass.ADDRESS_LINE2 BeneficiaryAddressLine2,
+        ass.ADDRESS_LINE3 BeneficiaryAddressLine3,
+        ass.CITY,
+        ass.STATE,
+        ass.ZIP BeneficiaryZip,
+        hcp.email_address BeneficiaryEmail ,
+        ieb.bank_account_num BeneficiaryAccountNumber ,
+        ieb.bank_account_name BeneficiaryAccountName ,
+        ass.country BeneficiaryAccountCountry ,
+        ieb.iban iban_code ,
+        ieb.ext_bank_account_id ,
+        ieb.currency_code BeneficiaryAccountCurrency ,
+        SUBSTR(ieb.attribute1,1,11) BeneficiaryBankBICCode ,
+        NVL(ieb.attribute3,ieb.attribute2) BeneficiaryIFSCCode, --SUBSTR(ieb.attribute1,'1',INSTR(ieb.attribute1,'XX')-1) BeneficiaryBankBICCode
+        party_bank.party_name BeneficiaryBankName ,
+        branch_prof.organization_name BeneficiaryBranchName ,
+        iep.ext_payee_id ,
+        iep.payee_party_id
+      FROM hz_parties party_supp ,
+        ap_suppliers aps ,
+        hz_party_sites site_supp ,
+        ap_supplier_sites_all ass ,
+        iby_external_payees_all iep ,
+        iby_pmt_instr_uses_all ipi ,
+        iby_ext_bank_accounts ieb ,
+        hz_parties party_bank ,
+        hz_parties party_branch ,
+        hz_organization_profiles bank_prof ,
+        hz_organization_profiles branch_prof ,
+        hz_contact_points hcp
+      WHERE party_supp.party_id      = aps.party_id
+      AND party_supp.party_id        = site_supp.party_id
+      AND site_supp.party_site_id    = ass.party_site_id
+      AND ass.vendor_id              = aps.vendor_id
+      AND iep.payee_party_id         = party_supp.party_id
+      AND iep.party_site_id          = site_supp.party_site_id
+      AND iep.supplier_site_id       = ass.vendor_site_id
+      AND iep.ext_payee_id           = ipi.ext_pmt_party_id(+)
+      AND ipi.instrument_id(+)       = ieb.ext_bank_account_id
+      AND ieb.bank_id                = party_bank.party_id
+      AND ieb.branch_id              = party_branch.party_id
+      AND party_branch.party_id      = branch_prof.party_id
+      AND party_bank.party_id        = bank_prof.party_id
+      AND site_supp.party_site_id    = hcp.owner_table_id(+)
+      AND hcp.contact_point_type (+) = 'EMAIL'
+      AND hcp.status (+)             = 'A'
+      AND hcp.owner_table_name (+)   = 'HZ_PARTY_SITES'
+      AND hcp.primary_flag (+)       = 'Y'
+      ) suppl_bank
+    WHERE ch.ce_bank_acct_use_id          = cbau.bank_acct_use_id
+    AND cbau.bank_account_id              = ba.bank_account_id
+    AND ba.bank_branch_id                 = br.branch_party_id
+    AND ch.check_id                       = aipa.check_id
+    AND ch.checkrun_id                    = aisca.checkrun_id(+)
+    AND aia.invoice_id                    = aipa.invoice_id
+    AND ch.payment_id                     = ipa.payment_id
+    AND ipa.payments_complete_flag        = 'Y'
+    AND suppl_bank.payee_party_id(+)      = ipa.payee_party_id
+    AND suppl_bank.ext_bank_account_id(+) = ch.external_bank_account_id
+    AND suppl_bank.ext_payee_id(+)        = ipa.ext_payee_id
+    AND ch.attribute_category            IS NULL
+    AND flv.lookup_type                   = 'XXOA_MUSCAT_EBANKING_BANK_ACC' ---'XXOA_AH_EBANKING_BANK_ACCOUNT'
+    AND flv.enabled_flag                  = 'Y'
+    AND UPPER (flv.attribute_category)    = UPPER ('EBanking Bank Accounts')
+      -- AND flv.description > '05-APR-2021'
+    AND UPPER (br.bank_name)                                                          = UPPER (flv.attribute1)
+    AND UPPER (ch.bank_account_name)                                                  = UPPER (flv.attribute2)
+    AND flv.language                                                                  = 'US'
+    AND ch.status_lookup_code                                                         ='NEGOTIABLE'
+    AND DECODE(SUBSTR(trim(ch.checkrun_name),1,5),'Quick',ch.check_id,ch.checkrun_id) = P_BATCH
+      -- AND ch.checkrun_id = P_BATCH
+    AND ch.org_id = cbau.org_id
+    AND ch.org_id = aipa.org_id;
+    --    ORDER BY ch.check_id;
+	*/
+  BEGIN
+    SELECT COUNT(1)
+    INTO l_check_count
+    FROM ap_checks_all ac
+    WHERE DECODE(SUBSTR(trim(ac.checkrun_name),1,5),'Quick',ac.check_id,ac.checkrun_id) = P_BATCH;
+    fnd_file.put_line(fnd_file.log,'Check Count ' || l_check_count);
+    l_batch      := p_batch;
+    l_request_id := P_request_id;
+    --    l_ben_country := p_ben_country;
+    ------- Check if batch is created with oman country along with other countries
+    BEGIN
+      SELECT COUNT(1)
+      INTO l_country_count
+      FROM
+        (SELECT DISTINCT CHECKRUN_NAME,
+          DECODE(COUNTRY,'OM','OM','FC') BEN_NATIONALITY
+        FROM AP_CHECKS_ALL
+        WHERE DECODE(SUBSTR(trim(checkrun_name),1,5),'Quick',check_id,checkrun_id) = P_BATCH
+        );
+    EXCEPTION
+    WHEN OTHERS THEN
+      dbms_output.put_line ('NO DATA FOUND FOR GIVEN BATCH'||SQLERRM);
+    END;
+    fnd_file.put_line (fnd_file.LOG,'  l_country_count:   '||l_country_count );
+    IF l_country_count > 1 THEN
+      fnd_file.put_line ( fnd_file.LOG, 'Payment batch contains both Oman and other country payments');
+    ELSE
+      FOR c1 IN cur_insert(l_batch, l_request_id)
+      LOOP
+        IF c1.ext_bank_account_id IS NULL THEN
+          fnd_file.put_line(fnd_file.log,'External Bank account ID is null for the checkrun name - ' || c1.CHECKRUN_NAME || ' and hence record is not inserted in Muscat staging table.');
+        ELSE
+          IF c1.benbankswiftcode IS NULL THEN
+            fnd_file.put_line(fnd_file.log,'Swift Code is null for Supplier ' || c1.BENNAME || ' and for Bank account name ' || c1.BENACCOUNTNO || ' and for the checkrun name - ' || c1.CHECKRUN_NAME || '. Hence record is not inserted in Muscat staging table.');
+          ELSE
+		  fnd_file.put_line(fnd_file.log,'C1.checkrun_name ' ||C1.checkrun_name);
+            INSERT
+            INTO XXOA.XXOA_PAYMENT_OU_MUSCAT_STG VALUES
+              (
+                c1.Header,
+                'BVP',
+                c1.VALUE_DATE,
+                'OWN',--c1.BENBANKSWIFTCODE,
+                c1.DEBIT_ACCT_NO,
+                c1.BENECURRENCY,
+                c1.AMOUNT_W,
+                c1.benaccountno,
+                c1.benname,
+                C1.checkrun_name,
+                C1.BEN_NATIONALITY,
+                C1.FILE_NAME,
+                c1.VALIDATION_STATUS,
+                c1.VALIDATION_REMARKS,
+                C1.BENBANKSWIFTCODE,
+                C1.CHECKRUN_ID,
+                c1.REQUEST_ID,
+                c1.RECORD_COUNT,
+                c1.RETCODE
+              );
+            l_count := l_count + 1;
+          END IF;
+        END IF;
+      END LOOP;
+    END IF;
+    BEGIN
+      IF l_count <> l_check_count THEN
+        ROLLBACK;
+      ELSE
+        COMMIT;
+      END IF;
+    END;
+  END Insert_pymt_datatostg;
+/************************************************************************************
+PROCEDURE xxoa_email_records
+DESCRIPTION: This procedure is send error records as email to the end user
+*************************************************************************************/
+  PROCEDURE payment_Vali_failure_det_email
+    (
+      p_request_id IN NUMBER
+    )
+  IS
+    l_file_name      VARCHAR2(500)   := NULL;
+    g_n_success_code CONSTANT NUMBER := 0;
+    l_mail_conn utl_smtp.connection;
+    l_v_boundary VARCHAR2(50) := '----=*#abc1234321cba#*=';
+    l_pi_step PLS_INTEGER     := 24573;
+    l_attach_clob CLOB        := NULL;
+    l_attach_clob1 CLOB       := NULL;
+    l_v_mailhost      VARCHAR2(200) ;                          --:=  '10.241.8.15';
+    l_v_mail_from     VARCHAR2(200)  := 'applprod@omanair.com'; --fnd_profile.VALUE('XXOA_PROFILE_FROM_MAIL');
+    l_v_attach_name   VARCHAR2(200)  := 'Muscat_Payment_Validation_Error_'||p_request_id||'_'|| TO_CHAR(sysdate, 'DDMMYYYY')|| '.csv';
+    l_v_mail_subject  VARCHAR2(2000) := 'Muscat_Payment_Validation_Error_'||p_request_id||'_'|| TO_CHAR(sysdate, 'DDMMYYYY');
+    l_v_mail_body     VARCHAR2(4000) := 'Hi, '|| chr(10)|| chr(10)|| 'Please find the attached file for the error records which was generated during Bank Muscat Interface Run.' || chr(10)|| chr(10)|| 'Thanks,'|| chr(10)|| 'Oman Air Team';
+    l_v_mail_to       VARCHAR2(1000) ;
+    l_v_mail_id       VARCHAR2(1000) ;
+    l_n_loop_ctr      NUMBER;
+    l_v_error_message VARCHAR2(2000);
+    l_v_mail_to_flag  VARCHAR2(1);
+    l_e_exception     EXCEPTION;
+    to_email_id       VARCHAR2(250);
+    CURSOR l_to_email_cur
+    IS
+      SELECT listagg(flv.description,',')within GROUP (
+      ORDER BY flv.description) AS email_id
+      FROM apps.fnd_lookup_values flv
+      WHERE 1              = 1
+      AND flv.lookup_type  = 'XXOA_Muscat_TO_EMAIL_ADDRESS' -- lookup having to Email Address to send failure emails
+      AND flv.enabled_flag = 'Y'
+      AND flv.language     = 'US';
+    CURSOR l_get_erred_rec_cur
+    IS
+      SELECT DISTINCT CHECKRUN_NAME,
+        VALIDATION_STATUS,
+        VALIDATION_REMARKS
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE request_id        = p_request_id
+      AND Validation_status   = 'F'
+      AND validation_remarks IS NOT NULL;
+  TYPE l_get_erred_rec_tab
+IS
+  TABLE OF l_get_erred_rec_cur%rowtype INDEX BY PLS_INTEGER;
+  l_error_record_tab l_get_erred_rec_tab;
+BEGIN
+  SELECT flv.description
+  INTO l_v_mailhost
+  FROM apps.fnd_lookup_values flv
+  WHERE 1              = 1
+  AND flv.lookup_type  = 'XXOA_MUSCAT_MAIL_HOST' -- lookup having to Email Address to send failure emails---XXOA_AHLI_MAIL_HOST 10.241.8.15
+  AND flv.enabled_flag = 'Y'
+  AND flv.language     = 'US';
+  IF l_v_mail_from    IS NULL THEN
+    l_v_error_message := 'XXOA Bank Muscat FROM LIST Profile value is not defined';
+    RAISE l_e_exception;
+  END IF;
+IF l_v_mailhost     IS NULL THEN
+  l_v_error_message := 'XXOA Bank Muscat MAIL HOST Profile value is not defined';
+  RAISE l_e_exception;
+END IF;
+BEGIN
+  SELECT 'Batch Name'
+    || ' , '
+    || 'Validation Status'
+    || ' , '
+    || 'Validation Remarks'
+  INTO l_attach_clob
+  FROM dual;
+EXCEPTION
+WHEN OTHERS THEN
+  l_v_error_message := 'Error Occured when fetching header column details: '|| SUBSTR(sqlerrm, 1, 3000);
+  RAISE l_e_exception;
+END;
+l_n_loop_ctr := 0;
+FOR l_get_erred_rec_cur_rec IN l_get_erred_rec_cur
+LOOP
+  BEGIN
+    l_n_loop_ctr                                        := l_n_loop_ctr + 1;
+    l_error_record_tab(l_n_loop_ctr).checkrun_name      := l_get_erred_rec_cur_rec.checkrun_name;
+    l_error_record_tab(l_n_loop_ctr).validation_status  := l_get_erred_rec_cur_rec.validation_status;
+    l_error_record_tab(l_n_loop_ctr).validation_remarks := l_get_erred_rec_cur_rec.validation_remarks;
+  EXCEPTION
+  WHEN OTHERS THEN
+    l_v_error_message := SUBSTR('Unexpected error while fetching header erred records' || sqlerrm, 0, 1999);
+    RAISE l_e_exception;
+    fnd_file.put_line(fnd_file.log, 'Error While fetching records!'||SQLERRM);
+  END;
+END LOOP;
+IF l_n_loop_ctr <> 0 THEN
+  l_mail_conn   := utl_smtp.open_connection(l_v_mailhost, 25);
+  utl_smtp.helo(l_mail_conn, l_v_mailhost);
+  utl_smtp.mail(l_mail_conn, l_v_mail_from);
+  FOR l_to_email_rec IN l_to_email_cur
+  LOOP
+    l_v_mail_id := l_to_email_rec.email_id;
+    utl_smtp.rcpt(l_mail_conn, l_v_mail_id);
+    l_v_mail_to := l_v_mail_to|| l_v_mail_id|| ',';
+    fnd_file.put_line(fnd_file.log, 'inside for loop!'||l_v_mail_id);
+    fnd_file.put_line(fnd_file.log, 'inside for loop!'||l_v_mail_id);
+  END LOOP;
+  utl_smtp.rcpt(l_mail_conn, l_v_mail_id);
+  utl_smtp.open_data(l_mail_conn);
+  utl_smtp.write_data(l_mail_conn, 'Date: '|| TO_CHAR(sysdate, 'DD-MON-YYYY HH24:MI:SS')|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'To: '|| l_v_mail_to|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'From: '|| l_v_mail_from|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Subject: '|| l_v_mail_subject|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Reply-To: '|| l_v_mail_from|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'MIME-Version: 1.0' || utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Content-Type: multipart/mixed; boundary="'|| l_v_boundary|| '"'|| utl_tcp.crlf|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, '--'|| l_v_boundary|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Content-Type: text/plain; charset="iso-8859-1"'|| utl_tcp.crlf|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, l_v_mail_body);
+  utl_smtp.write_data(l_mail_conn, utl_tcp.crlf || utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, '--'|| l_v_boundary|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Content-Type: '|| NULL|| '; name="'|| l_v_attach_name|| '"'|| utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, 'Content-Disposition: attachment; filename="'|| l_v_attach_name|| '"'|| utl_tcp.crlf|| utl_tcp.crlf);
+  FOR l_n_loop_ctr1 IN 0..trunc((dbms_lob.getlength(l_attach_clob) - 1) / l_pi_step)
+  LOOP
+    utl_smtp.write_data(l_mail_conn, dbms_lob.substr(l_attach_clob, l_pi_step, l_n_loop_ctr1 * l_pi_step + 1));
+  END LOOP;
+  FOR l_n_loop_ctr IN l_error_record_tab.first..l_error_record_tab.last
+  LOOP
+    BEGIN
+      l_attach_clob := NULL;
+      l_attach_clob := chr(13)|| chr(10);
+      FOR l_n_loop_ctr2 IN 0..trunc((dbms_lob.getlength(l_attach_clob) - 1) / l_pi_step)
+      LOOP
+        utl_smtp.write_data(l_mail_conn, dbms_lob.substr(l_attach_clob, l_pi_step, l_n_loop_ctr2 * l_pi_step + 1));
+      END LOOP;
+      l_attach_clob := REPLACE(l_error_record_tab(l_n_loop_ctr).checkrun_name, ',', '.') || ' , ' || REPLACE(l_error_record_tab(l_n_loop_ctr).validation_status, ',', '.') || ' , ' || REPLACE(l_error_record_tab(l_n_loop_ctr).validation_remarks, ',', '.') ;
+    EXCEPTION
+    WHEN OTHERS THEN
+      l_v_error_message := SUBSTR('Unexpected error while fetching details from table type' || sqlerrm, 0, 1999);
+      RAISE l_e_exception;
+      fnd_file.put_line(fnd_file.log, 'Error While fethcing details from table type!'||SQLERRM);
+    END;
+    FOR l_n_loop_ctr2 IN 0..trunc((dbms_lob.getlength(l_attach_clob) - 1) / l_pi_step)
+    LOOP
+      utl_smtp.write_data(l_mail_conn, dbms_lob.substr(l_attach_clob, l_pi_step, l_n_loop_ctr2 * l_pi_step + 1));
+    END LOOP;
+  END LOOP;
+  utl_smtp.write_data(l_mail_conn, utl_tcp.crlf || utl_tcp.crlf);
+  utl_smtp.write_data(l_mail_conn, '--'|| l_v_boundary|| '--'|| utl_tcp.crlf);
+  utl_smtp.close_data(l_mail_conn);
+  utl_smtp.quit(l_mail_conn);
+END IF;
+EXCEPTION
+WHEN l_e_exception THEN
+  fnd_file.put_line(fnd_file.log, 'No Eligible failures found!'||SQLERRM);
+WHEN OTHERS THEN
+  fnd_file.put_line(fnd_file.log,'Error while sending email2: '|| SUBSTR(sqlerrm, 1, 3000));
+END payment_Vali_failure_det_email;
+/************************************************************************************
+PROCEDURE xxoa_email_records
+DESCRIPTION: This procedure is send error records as email to the end user
+*************************************************************************************/
+PROCEDURE error_records_archive_ins(
+    p_request_id IN NUMBER )
+IS
+BEGIN
+  INSERT
+  INTO XXOA_PAYMENT_OU_MUSCAT_ARC
+    (SELECT *
+      FROM XXOA_PAYMENT_OU_MUSCAT_STG
+      WHERE VALIDATION_STATUS = 'F'
+      AND REQUEST_ID          = p_request_id
+    );
+  DELETE
+  FROM XXOA_PAYMENT_OU_MUSCAT_STG
+  WHERE VALIDATION_STATUS = 'F'
+  AND REQUEST_ID          = p_request_id;
+  COMMIT;
+EXCEPTION
+WHEN OTHERS THEN
+  fnd_file.put_line(fnd_file.log, 'No Eligible failures found!'||SQLERRM);
+END error_records_archive_ins;
+/*******************************************************************
+PROCEDURE xxoa_muscat_bank_ack_ins
+DESCRIPTION: This procedure inserts data into the acknowledgement table
+*******************************************************************/
+PROCEDURE xxoa_muscat_bank_ack_ins(
+    p_file_path IN VARCHAR2,
+    p_file_name IN VARCHAR2 )
+IS
+  l_p_flag     VARCHAR2(20):= 'N';
+  l_file_path  VARCHAR2(240);
+  l_error_flag VARCHAR2(10):= 'N';
+BEGIN
+  SELECT directory_name
+  INTO l_file_path
+  FROM dba_directories
+  WHERE directory_path = p_file_path;
+  IF l_file_path      IS NULL THEN
+    fnd_file.put_line(fnd_file.log,'Error : Directory Not Found');
+  END IF;
+  fnd_file.put_line(fnd_file.log,'Directory Name:'|| l_file_path);
+  BEGIN
+    fnd_file.put_line(fnd_file.log,'-----Inserting into the staging table------------');
+  EXCEPTION
+  WHEN OTHERS THEN
+    L_ERROR_FLAG := 'Y';
+    fnd_file.put_line (fnd_file.LOG,'Error while Updating Staging table '||SQLERRM);
+  END;
+  --------------End of insert-----------------------
+EXCEPTION
+WHEN OTHERS THEN
+  fnd_file.put_line(fnd_file.log,sqlerrm);
+END xxoa_muscat_bank_ack_ins;
+END XXOA_AP_MUSCAT_PAYMT_OUTB;
