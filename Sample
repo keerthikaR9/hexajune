@@ -1,7 +1,12 @@
--- Field 4: CreditAccount
--- If IBAN available use IBAN, else use local account number
--- No hyphens/spaces/special chars per Bank Sohar spec
-NVL(
-  REGEXP_REPLACE(suppl_bank.iban_code, '[^0-9A-Za-z]', ''),
-  suppl_bank.BeneficiaryAccountNumber
-)  AS credit_account,
+IF r1.TRANSFER_AMOUNT IS NOT NULL THEN
+            IF INSTR(TO_CHAR(r1.TRANSFER_AMOUNT), '.') > 0 THEN
+              IF LENGTH(SUBSTR(TO_CHAR(r1.TRANSFER_AMOUNT),
+                               INSTR(TO_CHAR(r1.TRANSFER_AMOUNT), '.') + 1)) > 3 THEN
+                l_validation_status := 'F';
+                RETCODE             := 1;
+                l_retcode           := 1;
+                l_err_msg           := l_err_msg || CHR(10) || 'TRANSFER_AMOUNT cannot have more than 3 decimal places' || CHR(59);
+                fnd_file.put_line(fnd_file.LOG, 'TRANSFER_AMOUNT exceeds 3 decimal places: ' || r1.CHECKRUN_NAME);
+              END IF;
+            END IF;
+          END IF;
