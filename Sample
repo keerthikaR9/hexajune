@@ -1,0 +1,21 @@
+------------------------------------------------------------------
+          -- Validation: DebitAccount format check
+          -- Must contain no hyphens, spaces or special characters
+          -- Max length 34 alphanumeric per Bank Sohar spec
+          ------------------------------------------------------------------
+          IF r1.DEBIT_ACCOUNT IS NOT NULL THEN
+            IF REGEXP_LIKE(r1.DEBIT_ACCOUNT, '[^0-9A-Za-z]') THEN
+              l_validation_status := 'F';
+              RETCODE             := 1;
+              l_retcode           := 1;
+              l_err_msg           := l_err_msg || CHR(10) || 'DEBIT_ACCOUNT contains invalid characters (hyphens/spaces/special chars not allowed)' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT has invalid characters: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF LENGTH(r1.DEBIT_ACCOUNT) > 34 THEN
+              l_validation_status := 'F';
+              RETCODE             := 1;
+              l_retcode           := 1;
+              l_err_msg           := l_err_msg || CHR(10) || 'DEBIT_ACCOUNT exceeds maximum length of 34 characters' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT length exceeds 34: ' || r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
