@@ -19,3 +19,10 @@
               fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT length exceeds 34: ' || r1.CHECKRUN_NAME);
             END IF;
           END IF;
+IF r1.VALUE_DATE IS NULL THEN
+            UPDATE XXOA_PAYMENT_OU_SIB_STG
+            SET    VALUE_DATE = TRUNC(SYSDATE)
+            WHERE  CHECKRUN_ID = r1.CHECKRUN_ID
+            AND    REQUEST_ID  = r1.REQUEST_ID;
+            fnd_file.put_line(fnd_file.LOG, 'VALUE_DATE is null, defaulted to current date: ' || r1.CHECKRUN_NAME);
+          END IF;
