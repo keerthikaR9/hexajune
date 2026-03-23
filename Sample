@@ -1,26 +1,4 @@
--- Run this first to see available payment batches
-SELECT DISTINCT 
-  checkrun_id,
-  checkrun_name,
-  status_lookup_code,
-  bank_account_name,
-  check_date
-FROM ap_checks_all
-WHERE status_lookup_code = 'NEGOTIABLE'
-AND UPPER(bank_account_name) LIKE '%SOHAR%'
-ORDER BY check_date DESC;
-```
 
-This will show you all **NEGOTIABLE** payments from Sohar bank accounts.
-
----
-
-**Step 2 — Pick any `CHECKRUN_ID` from the results and use it:**
-
-For example if result shows:
-```
-CHECKRUN_ID = 12345
-CHECKRUN_NAME = TEST_SOHAR_BATCH
 
 
 
@@ -33,3 +11,20 @@ SELECT DISTINCT
 FROM ap_checks_all
 WHERE status_lookup_code = 'NEGOTIABLE'
 ORDER BY check_date DESC;
+
+SELECT DISTINCT
+  ch.checkrun_id,
+  ch.checkrun_name,
+  ch.bank_account_name,
+  br.bank_name,
+  ch.status_lookup_code,
+  ch.check_date
+FROM ap_checks_all    ch,
+     ce_bank_accounts ba,
+     ce_bank_acct_uses_all cbau,
+     ce_bank_branches_v    br
+WHERE ch.ce_bank_acct_use_id = cbau.bank_acct_use_id
+AND   cbau.bank_account_id   = ba.bank_account_id
+AND   ba.bank_branch_id      = br.branch_party_id
+AND   ch.status_lookup_code  = 'NEGOTIABLE'
+ORDER BY ch.check_date DESC;
