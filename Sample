@@ -28,3 +28,19 @@ AND   cbau.bank_account_id   = ba.bank_account_id
 AND   ba.bank_branch_id      = br.branch_party_id
 AND   ch.status_lookup_code  = 'NEGOTIABLE'
 ORDER BY ch.check_date DESC;
+
+SELECT ch.checkrun_id,
+       ch.checkrun_name,
+       ch.check_id,
+       br.bank_name,
+       ch.bank_account_name
+FROM   ap_checks_all          ch,
+       ce_bank_accounts        ba,
+       ce_bank_acct_uses_all   cbau,
+       ce_bank_branches_v      br
+WHERE  ch.ce_bank_acct_use_id  = cbau.bank_acct_use_id
+AND    cbau.bank_account_id    = ba.bank_account_id
+AND    ba.bank_branch_id       = br.branch_party_id
+AND    DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446
+AND    ch.status_lookup_code   = 'NEGOTIABLE'
+AND    ch.attribute_category  IS NULL;
