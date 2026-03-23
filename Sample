@@ -21,3 +21,15 @@ For example if result shows:
 ```
 CHECKRUN_ID = 12345
 CHECKRUN_NAME = TEST_SOHAR_BATCH
+
+
+
+SELECT DISTINCT
+  checkrun_id,
+  checkrun_name,
+  status_lookup_code,
+  bank_account_name,
+  check_date
+FROM ap_checks_all
+WHERE status_lookup_code = 'NEGOTIABLE'
+ORDER BY check_date DESC;
