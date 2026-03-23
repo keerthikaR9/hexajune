@@ -1,28 +1,42 @@
-------------------------------------------------------------------
-          -- Validation: DebitAccount format check
-          -- Must contain no hyphens, spaces or special characters
-          -- Max length 34 alphanumeric per Bank Sohar spec
-          ------------------------------------------------------------------
-          IF r1.DEBIT_ACCOUNT IS NOT NULL THEN
-            IF REGEXP_LIKE(r1.DEBIT_ACCOUNT, '[^0-9A-Za-z]') THEN
-              l_validation_status := 'F';
-              RETCODE             := 1;
-              l_retcode           := 1;
-              l_err_msg           := l_err_msg || CHR(10) || 'DEBIT_ACCOUNT contains invalid characters (hyphens/spaces/special chars not allowed)' || CHR(59);
-              fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT has invalid characters: ' || r1.CHECKRUN_NAME);
-            END IF;
-            IF LENGTH(r1.DEBIT_ACCOUNT) > 34 THEN
-              l_validation_status := 'F';
-              RETCODE             := 1;
-              l_retcode           := 1;
-              l_err_msg           := l_err_msg || CHR(10) || 'DEBIT_ACCOUNT exceeds maximum length of 34 characters' || CHR(59);
-              fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT length exceeds 34: ' || r1.CHECKRUN_NAME);
-            END IF;
-          END IF;
-IF r1.VALUE_DATE IS NULL THEN
-            UPDATE XXOA_PAYMENT_OU_SIB_STG
-            SET    VALUE_DATE = TRUNC(SYSDATE)
-            WHERE  CHECKRUN_ID = r1.CHECKRUN_ID
-            AND    REQUEST_ID  = r1.REQUEST_ID;
-            fnd_file.put_line(fnd_file.LOG, 'VALUE_DATE is null, defaulted to current date: ' || r1.CHECKRUN_NAME);
-          END IF;
+-------------------------------------------------------------
+---------------------------------------------------------------------------
+              -- Fetch file name reference parts from lookup XXOA_SIB_FILE_NAME_CONFIG
+              -- Only CustRef, EntityRef, ApplicantRef maintained in lookup
+              -- MDMC and NSTP hardcoded (TODO: update once business confirms)
+              ---------------------------------------------------------------------------
+              BEGIN
+                SELECT MAX(CASE WHEN lookup_code = 'CUST_REF'   THEN description END),
+                       MAX(CASE WHEN lookup_code = 'ENTITY_REF' THEN description END),
+                       MAX(CASE WHEN lookup_code = 'APPL_REF'   THEN description END)
+                INTO   l_cust_ref,
+                       l_entity_ref,
+                       l_appl_ref
+                FROM   fnd_lookup_values
+                WHERE  lookup_type  = 'XXOA_SIB_FILE_NAME_CONFIG'
+                AND    enabled_flag = 'Y'
+                AND    language     = 'US';
+              EXCEPTION
+                WHEN OTHERS THEN
+                  fnd_file.put_line(fnd_file.LOG, 'Error fetching file name config from lookup: ' || SQLERRM);
+              END;
+
+              -- Build file name dynamically
+              l_file_name := l_cust_ref
+                          || '_' || l_entity_ref
+                          || '_' || l_appl_ref
+                          || '_' || 'MDMC'   -- TODO: Replace once business confirms
+                          || '_' || 'NSTP'   -- TODO: Replace once business confirms
+                          || '_BS_'
+                          || TO_CHAR(SYSDATE, 'DDMMYYHH24MISS')
+                          || l_seq_no
+                          || '.csv';
+```
+
+So the flow becomes:
+```
+l_file_name := NULL               ← line 494 (existing)
+GET directory path                ← lines 496-509 (existing)
+l_seq_no := l_seq_no + 1         ← line 511 (existing)
+FETCH lookup → l_cust_ref etc    ← NEW
+BUILD l_file_name from lookup     ← REPLACES old hardcoded line
+fnd_file.put_line(FileName)       ← line 524 (existing, no change)
