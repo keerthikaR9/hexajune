@@ -1,42 +1,11 @@
--------------------------------------------------------------
----------------------------------------------------------------------------
-              -- Fetch file name reference parts from lookup XXOA_SIB_FILE_NAME_CONFIG
-              -- Only CustRef, EntityRef, ApplicantRef maintained in lookup
-              -- MDMC and NSTP hardcoded (TODO: update once business confirms)
-              ---------------------------------------------------------------------------
-              BEGIN
-                SELECT MAX(CASE WHEN lookup_code = 'CUST_REF'   THEN description END),
-                       MAX(CASE WHEN lookup_code = 'ENTITY_REF' THEN description END),
-                       MAX(CASE WHEN lookup_code = 'APPL_REF'   THEN description END)
-                INTO   l_cust_ref,
-                       l_entity_ref,
-                       l_appl_ref
-                FROM   fnd_lookup_values
-                WHERE  lookup_type  = 'XXOA_SIB_FILE_NAME_CONFIG'
-                AND    enabled_flag = 'Y'
-                AND    language     = 'US';
-              EXCEPTION
-                WHEN OTHERS THEN
-                  fnd_file.put_line(fnd_file.LOG, 'Error fetching file name config from lookup: ' || SQLERRM);
-              END;
-
-              -- Build file name dynamically
-              l_file_name := l_cust_ref
-                          || '_' || l_entity_ref
-                          || '_' || l_appl_ref
-                          || '_' || 'MDMC'   -- TODO: Replace once business confirms
-                          || '_' || 'NSTP'   -- TODO: Replace once business confirms
-                          || '_BS_'
-                          || TO_CHAR(SYSDATE, 'DDMMYYHH24MISS')
-                          || l_seq_no
-                          || '.csv';
-```
-
-So the flow becomes:
-```
-l_file_name := NULL               ← line 494 (existing)
-GET directory path                ← lines 496-509 (existing)
-l_seq_no := l_seq_no + 1         ← line 511 (existing)
-FETCH lookup → l_cust_ref etc    ← NEW
-BUILD l_file_name from lookup     ← REPLACES old hardcoded line
-fnd_file.put_line(FileName)       ← line 524 (existing, no change)
+-- Field 17: PaymentDetails - invoice numbers separated by '/'
+        -- Single invoice: printed as is, no separator
+        -- Multiple invoices: separated by '/' up to 143 chars
+        -- Commas removed from invoice numbers
+        SUBSTR(
+          (SELECT LISTAGG(REPLACE(inv.invoice_num, ',', ''), '/') WITHIN GROUP (ORDER BY inv.invoice_num)
+           FROM   apps.ap_invoices_all inv,
+                  apps.ap_invoice_payments_all pay
+           WHERE  inv.invoice_id = pay.invoice_id
+           AND    pay.check_id   = ch.check_id),
+          1, 143)                                                              AS paymentdetails,
