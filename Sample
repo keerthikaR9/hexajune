@@ -3,55 +3,68 @@
           -- If user selected a value it comes from aisca.attribute6
           -- If null, default from XXOA_SIB_DEFAULT_PURPOSE lookup
           -- based on beneficiary country (IN, AE, CN)
-          -- Only applicable for India, UAE, China
           ------------------------------------------------------------------
-          IF r1.BENBANKCOUNTRY IN ('IN', 'AE', 'CN') AND r1.TRANSFERPURPOSE IS NULL THEN
-            BEGIN
-              SELECT description
-              INTO   l_purposecode
-              FROM   fnd_lookup_values
-              WHERE  lookup_type  = 'XXOA_SIB_DEFAULT_PURPOSE'
-              AND    lookup_code  = r1.BENBANKCOUNTRY  -- 'IN' or 'AE' or 'CN'
-              AND    enabled_flag = 'Y'
-              AND    language     = 'US';
 
-              -- Update staging with default purpose code
-              UPDATE XXOA_PAYMENT_OU_SIB_STG
-              SET    TRANSFERPURPOSE = l_purposecode
-              WHERE  CHECKRUN_ID     = r1.CHECKRUN_ID
-              AND    REQUEST_ID      = r1.REQUEST_ID;
+          -- If user did not select any value, fetch default from lookup
+          IF r1.TRANSFERPURPOSE IS NULL THEN
+            IF r1.BENBANKCOUNTRY IN ('IN', 'AE', 'CN') THEN
+              BEGIN
+                SELECT description
+                INTO   l_purposecode
+                FROM   fnd_lookup_values
+                WHERE  lookup_type  = 'XXOA_SIB_DEFAULT_PURPOSE'
+                AND    lookup_code  = r1.BENBANKCOUNTRY
+                AND    enabled_flag = 'Y'
+                AND    language     = 'US';
 
-              fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE defaulted for ' || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
+                -- Update staging with default value
+                UPDATE XXOA_PAYMENT_OU_SIB_STG
+                SET    TRANSFERPURPOSE = l_purposecode
+                WHERE  CHECKRUN_ID     = r1.CHECKRUN_ID
+                AND    REQUEST_ID      = r1.REQUEST_ID;
 
-            EXCEPTION
-              WHEN NO_DATA_FOUND THEN
-                l_validation_status := 'F';
-                RETCODE             := 1;
-                l_retcode           := 1;
-                l_err_msg           := l_err_msg || CHR(10) || 'TRANSFERPURPOSE default not found in lookup for country: ' || r1.BENBANKCOUNTRY || CHR(59);
-                fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE default not found for ' || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
-              WHEN OTHERS THEN
-                l_validation_status := 'F';
-                RETCODE             := 1;
-                l_retcode           := 1;
-                l_err_msg           := l_err_msg || CHR(10) || 'Error fetching default TRANSFERPURPOSE: ' || SQLERRM || CHR(59);
-                fnd_file.put_line(fnd_file.LOG, 'Error fetching TRANSFERPURPOSE default: ' || SQLERRM);
-            END;
+                fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE defaulted for '
+                                  || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
+              EXCEPTION
+                WHEN NO_DATA_FOUND THEN
+                  l_validation_status := 'F';
+                  RETCODE             := 1;
+                  l_retcode           := 1;
+                  l_err_msg           := l_err_msg || CHR(10) || 'TRANSFERPURPOSE default not found in lookup for country: '
+                                        || r1.BENBANKCOUNTRY || CHR(59);
+                  fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE default not maintained for '
+                                    || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
+                WHEN OTHERS THEN
+                  l_validation_status := 'F';
+                  RETCODE             := 1;
+                  l_retcode           := 1;
+                  l_err_msg           := l_err_msg || CHR(10) || 'Error fetching default TRANSFERPURPOSE: '
+                                        || SQLERRM || CHR(59);
+                  fnd_file.put_line(fnd_file.LOG, 'Error fetching TRANSFERPURPOSE default: ' || SQLERRM);
+              END;
+            END IF;
+          -- If user selected a value, use it directly - no validation needed
+          ELSE
+            fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE user selected value: '
+                              || r1.TRANSFERPURPOSE || ' for batch: ' || r1.CHECKRUN_NAME);
           END IF;
 ```
 
 ---
 
-### Summary of flow:
+### Flow:
 ```
-User selects purpose code in payment batch
-        ↓
-aisca.attribute6 → TRANSFERPURPOSE in staging
-        ↓
-Validation: Is TRANSFERPURPOSE null AND country IN (IN/AE/CN)?
-        ↓ YES                          ↓ NO
-Fetch from                         No action
-XXOA_SIB_DEFAULT_PURPOSE           needed ✅
-lookup using country code
-        ↓
-Update staging with default value
+TRANSFERPURPOSE IS NULL?
+      ↓ YES                    ↓ NO
+Is country                User selected value
+IN/AE/CN?                 use it directly ✅
+  ↓ YES      ↓ NO
+Fetch        No action
+default      needed ✅
+from lookup
+  ↓
+Found?
+↓ YES    ↓ NO
+Update   Fail
+staging  validation ❌
+✅
