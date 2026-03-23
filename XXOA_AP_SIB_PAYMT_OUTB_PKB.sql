@@ -1,0 +1,1278 @@
+CREATE OR REPLACE PACKAGE BODY XXOA_AP_SIB_PAYMT_OUTB
+AS
+  ---------------------------------------------------------------------------
+  -- 2026, Hexaware Technologies. All rights reserved.
+  ---------------------------------------------------------------------------
+  -- File name                : XXOA_AP_SIB_PAYMT_OUTB
+  -- Author                   : Keerthika
+  -- Date                     : 22-Mar-2026
+  -- Language                 : English
+  -- Module                   : AP
+  -- Doc Ref(s)               :
+  --
+  -- Client                   : Oman Air
+  --
+  -- Description              : Package for Generating Payment details file and
+  --                            transfer to the Bank server for Bank Sohar (SIB)
+  --
+  -- Change History Information
+  -- --------------------------
+  -- Version  Date         Author        Change Reference / Description
+  -- -------  -----------  ------------  --------------------------------
+  -- 1.0      22-Mar-2026  Keerthika     Initial Version
+  ---------------------------------------------------------------------------
+
+  ---------------------------------------------------------------------------
+  -- PROCEDURE: outbound_validation
+  -- Main orchestrator: Insert -> Validate -> Generate CSV -> SFTP
+  ---------------------------------------------------------------------------
+  PROCEDURE outbound_validation(
+      errbuf  OUT VARCHAR2,
+      retcode OUT VARCHAR2,
+      P_BATCH IN  NUMBER
+  )
+  IS
+    ---------------------------------------------------------------------------
+    -- Cursor: Distinct payment batches not yet processed (no file generated)
+    ---------------------------------------------------------------------------
+    CURSOR rec_payment_batch_cur IS
+      SELECT DISTINCT CHECKRUN_NAME
+      FROM   XXOA_PAYMENT_OU_SIB_STG
+      WHERE  CHECKRUN_ID = P_BATCH
+      AND    FILE_NAME  IS NULL;
+
+    ---------------------------------------------------------------------------
+    -- Cursor: Column header row for the CSV
+    -- Maps to Bank Sohar Payment File Format (45 fields)
+    ---------------------------------------------------------------------------
+    CURSOR csv_hdr_cur IS
+      SELECT (
+               'DebitAccount'          || CHR(44) ||
+               'DebitCurrency'         || CHR(44) ||
+               'ValueDate'             || CHR(44) ||
+               'CreditAccount'         || CHR(44) ||
+               'TransferAmount'        || CHR(44) ||
+               'BulkCustRefId'         || CHR(44) ||
+               'ChargeType'            || CHR(44) ||
+               'TransferPurpose'       || CHR(44) ||
+               'BenBankSwiftBICCode'   || CHR(44) ||
+               'BranchCode'            || CHR(44) ||
+               'BankCode'              || CHR(44) ||
+               'BeneficiaryName'       || CHR(44) ||
+               'BeneficiaryReference'  || CHR(44) ||
+               'BulkReference'         || CHR(44) ||
+               'FTCustRefId'           || CHR(44) ||
+               'CBO'                   || CHR(44) ||
+               'PaymentDetails'        || CHR(44) ||
+               'PaymentCurrency'       || CHR(44) ||
+               'BenBranchName'         || CHR(44) ||
+               'BenBankName'           || CHR(44) ||
+               'BenAddressLine1'       || CHR(44) ||
+               'BenAddressLine2'       || CHR(44) ||
+               'BenAddressLine3'       || CHR(44) ||
+               'BenBankAddressLine1'   || CHR(44) ||
+               'BenBankCountry'        || CHR(44) ||
+               'NotifyBen'             || CHR(44) ||
+               'NotifyBenEmail'        || CHR(44) ||
+               'NotifyBenChoice'       || CHR(44) ||
+               'BenBranchAddress1'     || CHR(44) ||
+               'BenBranchAddress2'     || CHR(44) ||
+               'BenBranchAddressCity3' || CHR(44) ||
+               'ServiceCode'           || CHR(44) ||
+               'ServiceFX'             || CHR(44) ||
+               'RateCode'              || CHR(44) ||
+               'NumberOfRecords'       || CHR(44) ||
+               'BatchHeaderID'         || CHR(44) ||
+               'R1' || CHR(44) || 'R2' || CHR(44) || 'R3' || CHR(44) ||
+               'R4' || CHR(44) || 'R5' || CHR(44) || 'R6' || CHR(44) ||
+               'R7' || CHR(44) || 'R8' || CHR(44) || 'R9'
+             ) header_col
+      FROM DUAL;
+
+    ---------------------------------------------------------------------------
+    -- Cursor: Data rows - reads from staging and formats as CSV
+    ---------------------------------------------------------------------------
+    CURSOR csv_data_cur(p_request_id NUMBER) IS
+      SELECT DEBIT_ACCOUNT
+        || CHR(44)
+        || TO_CHAR(VALUE_DATE, 'DD/MM/YYYY')
+        || CHR(44)
+        || CREDIT_ACCOUNT
+        || CHR(44)
+        || TRANSFER_AMOUNT
+        || CHR(44)
+        || BULKCUSTREFID
+        || CHR(44)
+        || CHARGETYPE
+        || CHR(44)
+        || TRANSFERPURPOSE
+        || CHR(44)
+        || BENBANKSWIFTBICCODE
+        || CHR(44)
+        || BRANCHCODE
+        || CHR(44)
+        || BANKCODE
+        || CHR(44)
+        || BENEFICIARYNAME
+        || CHR(44)
+        || BENEFICIARYREFERENCE
+        || CHR(44)
+        || BULKREFERENCE
+        || CHR(44)
+        || FTCUSTREFID
+        || CHR(44)
+        || CBO
+        || CHR(44)
+        || PAYMENTDETAILS
+        || CHR(44)
+        || PAYMENTCURRENCY
+        || CHR(44)
+        || BENBRANCHNAME
+        || CHR(44)
+        || BENBANKNAME
+        || CHR(44)
+        || BENADDRESSLINE1
+        || CHR(44)
+        || BENADDRESSLINE2
+        || CHR(44)
+        || BENADDRESSLINE3
+        || CHR(44)
+        || BENBANKADDRESSLINE3
+        || CHR(44)
+        || BENBANKCOUNTRY
+        || CHR(44)
+        || NOTIFYBEN
+        || CHR(44)
+        || NOTIFYBENEMAIL
+        || CHR(44)
+        || NOTIFYBENCHOICE
+        || CHR(44)
+        || BENBRANCHADDRESS1
+        || CHR(44)
+        || BENBRANCHADDRESS2
+        || CHR(44)
+        || BENBRANCHADDRESSCITY3
+        || CHR(44)
+        || SERVICECODE
+        || CHR(44)
+        || SERVICEFX
+        || CHR(44)
+        || RATECODE
+        || CHR(44)
+        || NUMBEROFRECORDS
+        || CHR(44)
+        || BATCHHEADERID
+        || CHR(44)
+        || R1
+        || CHR(44)
+        || R2
+        || CHR(44)
+        || R3
+        || CHR(44)
+        || R4
+        || CHR(44)
+        || R5
+        || CHR(44)
+        || R6
+        || CHR(44)
+        || R7
+        || CHR(44)
+        || R8
+        || CHR(44)
+        || R9
+        header_section,
+        CHECKRUN_NAME
+      FROM   XXOA_PAYMENT_OU_SIB_STG
+      WHERE  CHECKRUN_ID  = P_BATCH
+      AND    REQUEST_ID   = p_request_id
+      AND    NVL(RETCODE, 0) <> 1;
+
+    ---------------------------------------------------------------------------
+    -- Cursor: Records awaiting validation (no file, no status yet)
+    ---------------------------------------------------------------------------
+    CURSOR rec_payment_data_cur(p_request_id NUMBER) IS
+      SELECT *
+      FROM   XXOA_PAYMENT_OU_SIB_STG
+      WHERE  REQUEST_ID         = p_request_id
+      AND    FILE_NAME         IS NULL
+      AND    VALIDATION_STATUS IS NULL
+      AND    VALIDATION_REMARKS IS NULL;
+
+    -- Local variables
+    l_validation_status  VARCHAR2(1)   := 'S';
+    l_err_msg            VARCHAR2(4000);
+    l_record_count       NUMBER        := 0;
+    l_record_count1      NUMBER        := 0;
+    l_record_count2      NUMBER        := 0;
+    l_record_count3      NUMBER        := 0;
+    l_parent_request_id  NUMBER;
+    l_request_id         NUMBER;
+    l_stg_record_count   NUMBER;
+    l_file               UTL_FILE.file_type;
+    l_file_name          VARCHAR2(300);
+    l_batch              VARCHAR2(100);
+    l_file_path          VARCHAR2(200);
+    l_file_count         NUMBER;
+    l_valid              VARCHAR2(10)  := 'N';
+    v_step               NUMBER        := 0;
+    l_clear_prefix       VARCHAR2(100);
+    failure_validation   EXCEPTION;
+    l_transfer_method    VARCHAR2(100);
+    l_iban               VARCHAR2(100);
+    l_sort_code          VARCHAR2(100);
+    l_swift              VARCHAR2(100);
+    l_shr_file_path      VARCHAR2(200);
+    l_retcode            NUMBER        := 0;
+    l_seq_no             NUMBER        := 0;
+    l_batch_count        NUMBER        := 0;
+    l_count              NUMBER        := 0;
+    l_count1             NUMBER        := 0;
+    l_count2             NUMBER        := 0;
+    l_count3             NUMBER        := 0;
+    l_user_id            NUMBER        := FND_PROFILE.VALUE('USER_ID');
+    l_resp_id            NUMBER        := 50209;        -- TODO: Confirm responsibility ID for SIB
+    l_resp_appl_id       NUMBER        := 200;
+    l_attribute_category VARCHAR2(200);
+    L_NAME               VARCHAR2(100);
+    l_purposecode        VARCHAR2(100);
+    l_bank_account_name  VARCHAR2(100);
+    l_bank_name          VARCHAR2(360);
+    L_FLAG               NUMBER        := 0;
+
+  BEGIN
+    BEGIN
+      fnd_file.put_line(fnd_file.LOG, '----------Inserting Records to Stg table start------------');
+      l_parent_request_id := fnd_global.conc_request_id;
+      l_batch             := p_batch;
+      fnd_file.put_line(fnd_file.LOG, 'p_batch             : ' || p_batch);
+      fnd_file.put_line(fnd_file.LOG, 'l_parent_request_id : ' || l_parent_request_id);
+
+      -- Step 1: Load AP payment data into SIB staging table
+      Insert_pymt_datatostg(l_batch, l_stg_record_count, l_parent_request_id);
+
+      fnd_file.put_line(fnd_file.LOG, '----------Outbound Validation Start------------');
+
+      BEGIN
+        COMMIT;
+        -- Validation loop: iterate every staging record for this request
+        FOR r1 IN rec_payment_data_cur(l_parent_request_id)
+        LOOP
+          l_flag              := 1;
+          l_validation_status := 'S';
+          l_batch_count       := 0;
+          l_count             := 0;
+          l_count1            := 0;
+          l_count2            := 0;
+          l_count3            := 0;
+          l_purposecode       := NULL;
+          l_err_msg           := NULL;
+
+          ------------------------------------------------------------------
+          -- Validation 1: Duplicate Batch Check
+          -- Same CHECKRUN_NAME must not already exist as validated ('S')
+          ------------------------------------------------------------------
+          BEGIN
+            SELECT COUNT(*)
+            INTO   l_batch_count
+            FROM   XXOA_PAYMENT_OU_SIB_STG
+            WHERE  CHECKRUN_NAME     = r1.CHECKRUN_NAME
+            AND    VALIDATION_STATUS = 'S'
+            AND    REQUEST_ID       <> l_parent_request_id;
+          EXCEPTION
+            WHEN OTHERS THEN
+              dbms_output.put_line('NO DATA FOUND FOR VALIDATION RECORDS' || SQLERRM);
+          END;
+
+          IF l_batch_count > 0 THEN
+            l_validation_status := 'F';
+            l_err_msg           := l_err_msg || CHR(10) || 'Payment Batch Already Exists' || CHR(59);
+            fnd_file.put_line(fnd_file.LOG, 'Payment Batch Already Exists: ' || r1.CHECKRUN_NAME);
+            RETCODE   := 1;
+            l_retcode := 1;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Validation 2: Mandatory Fields
+          -- Per Bank Sohar spec: DebitAccount, DebitCurrency, ValueDate,
+          -- CreditAccount, TransferAmount, BeneficiaryName, PaymentCurrency
+          ------------------------------------------------------------------
+          IF    r1.DEBIT_ACCOUNT    IS NULL
+             OR r1.DEBIT_CURRENCY   IS NULL
+             OR r1.VALUE_DATE       IS NULL
+             OR r1.CREDIT_ACCOUNT   IS NULL
+             OR r1.TRANSFER_AMOUNT  IS NULL
+             OR r1.BENEFICIARYNAME  IS NULL
+             OR r1.PAYMENTCURRENCY  IS NULL
+          THEN
+            l_validation_status := 'F';
+            RETCODE             := 1;
+            l_retcode           := 1;
+            l_err_msg           := l_err_msg || CHR(10) || 'Mandatory Fields cannot be null' || CHR(59);
+            fnd_file.put_line(fnd_file.LOG, 'Mandatory Fields cannot be null: ' || r1.CHECKRUN_NAME);
+
+            IF r1.DEBIT_ACCOUNT   IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'DEBIT_ACCOUNT' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'DEBIT_ACCOUNT IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.DEBIT_CURRENCY  IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'DEBIT_CURRENCY' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'DEBIT_CURRENCY IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.VALUE_DATE      IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'VALUE_DATE' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'VALUE_DATE IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.CREDIT_ACCOUNT  IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'CREDIT_ACCOUNT' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'CREDIT_ACCOUNT IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.TRANSFER_AMOUNT IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'TRANSFER_AMOUNT' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'TRANSFER_AMOUNT IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.BENEFICIARYNAME IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'BENEFICIARYNAME' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'BENEFICIARYNAME IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+            IF r1.PAYMENTCURRENCY IS NULL THEN
+              l_err_msg := l_err_msg || CHR(10) || 'PAYMENTCURRENCY' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'PAYMENTCURRENCY IS NULL: ' || r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Validation 3: Value Date Range
+          -- Must not be in the past; must not exceed 5 days ahead
+          -- Per Bank Sohar spec: "Value date should not be less than the
+          -- file creation date and date difference cannot be greater than 5 days"
+          ------------------------------------------------------------------
+          IF r1.VALUE_DATE IS NOT NULL THEN
+            IF TRUNC(r1.VALUE_DATE) < TRUNC(SYSDATE) THEN
+              l_validation_status := 'F';
+              RETCODE             := 1;
+              l_retcode           := 1;
+              l_err_msg           := l_err_msg || CHR(10) || 'VALUE_DATE cannot be in the past' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'VALUE_DATE is past date: ' || r1.CHECKRUN_NAME);
+            ELSIF TRUNC(r1.VALUE_DATE) > TRUNC(SYSDATE) + 5 THEN
+              l_validation_status := 'F';
+              RETCODE             := 1;
+              l_retcode           := 1;
+              l_err_msg           := l_err_msg || CHR(10) || 'VALUE_DATE cannot be more than 5 days from today' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'VALUE_DATE exceeds 5-day limit: ' || r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Validation 4: SWIFT Code mandatory for Foreign transfers (MT103)
+          -- Per Bank Sohar spec: "Ben bank swift BIC code is Mandatory
+          -- if transaction type is MT103 (Foreign Currency Transfers)"
+          -- Applied to all non-OM beneficiary countries
+          ------------------------------------------------------------------
+          IF NVL(r1.BENBANKCOUNTRY, 'XX') <> 'OM' THEN
+            IF r1.BENBANKSWIFTBICCODE IS NULL THEN
+              l_validation_status := 'F';
+              RETCODE             := 1;
+              l_retcode           := 1;
+              l_err_msg           := l_err_msg || CHR(10) || 'BENBANKSWIFTBICCODE is mandatory for foreign transfers' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'BENBANKSWIFTBICCODE IS NULL for foreign country ' || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Validation 5: Transfer Purpose mandatory for UAE, China, India
+          -- Per Bank Sohar spec: "Mandatory if receiving account is in
+          -- UAE, CHINA and INDIA"
+          -- If null, attempt to default from lookup XXOA_SIB_DEFAULT_PC
+          ------------------------------------------------------------------
+          IF r1.BENBANKCOUNTRY IN ('AE', 'CN', 'IN') AND r1.TRANSFERPURPOSE IS NULL THEN
+            BEGIN
+              SELECT description
+              INTO   l_purposecode
+              FROM   FND_LOOKUP_VALUES_VL flv
+              WHERE  flv.lookup_type  = 'XXOA_SIB_DEFAULT_PC'   -- TODO: Confirm lookup name with business
+              AND    flv.enabled_flag = 'Y'
+              AND    flv.LOOKUP_CODE  = DECODE(r1.BENBANKCOUNTRY,
+                                               'IN', 'PURINDIA',
+                                               'AE', 'PURUAE',
+                                               'CN', 'PURCHINA',
+                                               'PUROTHER');
+            EXCEPTION
+              WHEN NO_DATA_FOUND THEN
+                l_validation_status := 'F';
+                l_err_msg           := l_err_msg || CHR(10) || 'TRANSFERPURPOSE cannot be null for UAE/China/India' || CHR(59);
+                fnd_file.put_line(fnd_file.LOG, 'TRANSFERPURPOSE IS NULL for ' || r1.BENBANKCOUNTRY || ': ' || r1.CHECKRUN_NAME);
+              WHEN OTHERS THEN
+                l_validation_status := 'F';
+                l_err_msg           := l_err_msg || CHR(10) || 'TRANSFERPURPOSE cannot be null for UAE/China/India' || CHR(59);
+                fnd_file.put_line(fnd_file.LOG, 'Error fetching purpose code for ' || r1.BENBANKCOUNTRY || ': ' || SQLERRM);
+            END;
+          END IF;
+
+          -- If a default purpose code was resolved from lookup, update staging
+          IF l_purposecode IS NOT NULL THEN
+            UPDATE XXOA_PAYMENT_OU_SIB_STG
+            SET    TRANSFERPURPOSE = l_purposecode
+            WHERE  CHECKRUN_ID     = r1.CHECKRUN_ID
+            AND    REQUEST_ID      = r1.REQUEST_ID;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Validation 6: ServiceCode mandatory for INR (IFSC) and GBP (Sort Code)
+          -- Per Bank Sohar spec: "IFSC Code mandatory for payment to INDIA
+          -- and Sort Code mandatory for transfers to Great Britain"
+          ------------------------------------------------------------------
+          IF r1.PAYMENTCURRENCY IN ('INR', 'GBP') AND r1.SERVICECODE IS NULL THEN
+            l_validation_status := 'F';
+            RETCODE             := 1;
+            l_retcode           := 1;
+            IF r1.PAYMENTCURRENCY = 'INR' THEN
+              l_err_msg := l_err_msg || CHR(10) || 'SERVICECODE (IFSC) is mandatory for INR payments' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'SERVICECODE (IFSC) IS NULL for INR payment: ' || r1.CHECKRUN_NAME);
+            ELSE
+              l_err_msg := l_err_msg || CHR(10) || 'SERVICECODE (Sort Code) is mandatory for GBP payments' || CHR(59);
+              fnd_file.put_line(fnd_file.LOG, 'SERVICECODE (Sort Code) IS NULL for GBP payment: ' || r1.CHECKRUN_NAME);
+            END IF;
+          END IF;
+
+          ------------------------------------------------------------------
+          -- Update staging with final validation result
+          ------------------------------------------------------------------
+          IF l_validation_status = 'F' THEN
+            UPDATE XXOA_PAYMENT_OU_SIB_STG
+            SET    VALIDATION_STATUS  = 'F',
+                   VALIDATION_REMARKS = l_err_msg,
+                   RETCODE            = l_retcode
+            WHERE  CHECKRUN_ID        = r1.CHECKRUN_ID
+            AND    REQUEST_ID         = r1.REQUEST_ID
+            AND    VALIDATION_STATUS IS NULL;
+          ELSE
+            UPDATE XXOA_PAYMENT_OU_SIB_STG
+            SET    VALIDATION_STATUS  = 'S',
+                   VALIDATION_REMARKS = NULL,
+                   RETCODE            = '0'
+            WHERE  CHECKRUN_ID        = P_BATCH
+            AND    REQUEST_ID         = l_parent_request_id
+            AND    RETCODE           IS NULL
+            AND    VALIDATION_STATUS IS NULL;
+            COMMIT;
+          END IF;
+
+        END LOOP; -- end validation loop
+
+        IF l_flag = 0 THEN
+          fnd_file.put_line(fnd_file.LOG, 'There are no records in staging to process. Please contact IT service desk.');
+        END IF;
+
+      END; -- end validation block
+
+      ------------------------------------------------------------------
+      -- Step 3: CSV File Generation
+      ------------------------------------------------------------------
+      BEGIN
+        l_seq_no := 0;
+
+        FOR payment_batch IN rec_payment_batch_cur
+        LOOP
+          fnd_file.put_line(fnd_file.LOG, 'CSV file generation start for batch: ' || payment_batch.CHECKRUN_NAME);
+
+          BEGIN
+            -- Check for any failed records in this request
+            SELECT COUNT(CHECKRUN_NAME)
+            INTO   l_record_count
+            FROM   XXOA_PAYMENT_OU_SIB_STG
+            WHERE  CHECKRUN_ID        = P_BATCH
+            AND    REQUEST_ID         = l_parent_request_id
+            AND    VALIDATION_STATUS  = 'F';
+
+            IF l_record_count > 0 THEN
+              L_VALID := 'N';
+            ELSE
+              L_VALID := 'Y';
+            END IF;
+
+            IF L_VALID = 'Y' THEN
+              l_file_name := NULL;
+
+              -- Resolve Oracle directory path for file output
+              BEGIN
+                SELECT directory_path
+                INTO   l_file_path
+                FROM   DBA_DIRECTORIES
+                WHERE  directory_name = 'XXOA_SIB_REQ'; -- TODO: Confirm Oracle directory name
+              EXCEPTION
+                WHEN NO_DATA_FOUND THEN
+                  fnd_file.put_line(fnd_file.LOG, 'NO DATA FOUND IN DBA_DIRECTORIES for XXOA_SIB_REQ: ' || SQLERRM);
+                  l_file_path := NULL;
+                WHEN OTHERS THEN
+                  fnd_file.put_line(fnd_file.LOG, 'EXCEPTION in DBA_DIRECTORIES: ' || SQLERRM);
+                  l_file_path := NULL;
+              END;
+
+              l_seq_no := l_seq_no + 1;
+
+              ---------------------------------------------------------------------------
+              -- Build file name per Bank Sohar format:
+              -- <CustRef>_<EntityRef>_<ApplicantRef>_<AccType>_<ProcType>_BS_<DateTime>.csv
+              -- TODO: Replace CUSTREF / ENTITYREF / APPREF once bank confirms values
+              -- TODO: Replace MDMC / NSTP once business confirms accounting/processing type
+              ---------------------------------------------------------------------------
+              l_file_name := 'CUSTREF_ENTITYREF_APPREF_MDMC_NSTP_BS_'
+                          || TO_CHAR(SYSDATE, 'DDMMYYHH24MISS')
+                          || l_seq_no
+                          || '.csv';
+
+              fnd_file.put_line(fnd_file.LOG, 'FileName: ' || l_file_name);
+              dbms_output.put_line('FileName: ' || l_file_name);
+
+              BEGIN
+                l_file := UTL_FILE.fopen('XXOA_SIB_REQ', l_file_name, 'W');
+                dbms_output.put_line('File opened successfully.');
+              EXCEPTION
+                WHEN OTHERS THEN
+                  dbms_output.put_line('Error opening file: ' || SQLERRM);
+              END;
+
+              -- Write column header row first, then all data rows
+              FOR csv_hdr IN csv_hdr_cur
+              LOOP
+                UTL_FILE.put(l_file, csv_hdr.header_col);
+                UTL_FILE.put(l_file, CHR(10));
+
+                FOR csv_data IN csv_data_cur(l_parent_request_id)
+                LOOP
+                  UTL_FILE.put(l_file, csv_data.header_section);
+                  UTL_FILE.put(l_file, CHR(10));
+
+                  -- Stamp file name on processed staging records
+                  UPDATE XXOA_PAYMENT_OU_SIB_STG
+                  SET    FILE_NAME    = l_file_name
+                  WHERE  CHECKRUN_NAME = csv_data.CHECKRUN_NAME
+                  AND    REQUEST_ID    = l_parent_request_id;
+
+                  -- Update AP_CHECKS_ALL with SIB e-banking confirmation attributes
+                  UPDATE ap.ap_checks_all aca
+                  SET    aca.attribute_category = 'SIB EBanking_Confirmation',
+                         aca.attribute1         = 'SIB-TRF',
+                         aca.attribute7         = TO_CHAR(TRUNC(SYSDATE), 'DD-MON-YYYY'),
+                         aca.last_update_login  = fnd_global.login_id,
+                         aca.last_update_date   = SYSDATE,
+                         aca.last_updated_by    = fnd_global.user_id
+                  WHERE  DECODE(SUBSTR(TRIM(aca.checkrun_name), 1, 5), 'Quick', aca.check_id, aca.checkrun_id) = P_BATCH;
+
+                  COMMIT;
+                END LOOP;
+              END LOOP;
+
+              UTL_FILE.fclose(l_file);
+              fnd_file.put_line(fnd_file.LOG, 'File created successfully: ' || l_file_name || ' at: ' || l_file_path);
+
+            ELSE
+              -- Validation failures exist - skip file creation
+              RETCODE := 1;
+              L_VALID := 'N';
+              UPDATE XXOA_PAYMENT_OU_SIB_STG
+              SET    VALIDATION_STATUS = 'F',
+                     RETCODE           = '1'
+              WHERE  CHECKRUN_ID       = P_BATCH
+              AND    REQUEST_ID        = l_parent_request_id;
+              fnd_file.put_line(fnd_file.LOG, 'No valid records for: ' || payment_batch.CHECKRUN_NAME || '. File not created.');
+            END IF;
+
+            fnd_file.put_line(fnd_file.LOG, '---------------------------------------------');
+
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG, 'IN FILE CREATION EXCEPTION: ' || SQLCODE || ':::' || SUBSTR(SQLERRM, 1, 200));
+          END;
+        END LOOP; -- end payment_batch loop
+
+        v_step := 12;
+        fnd_file.put_line(fnd_file.LOG, '');
+        fnd_file.put_line(fnd_file.LOG, '-----------.CSV file Generation Process end----------------');
+        fnd_file.put_line(fnd_file.LOG, '');
+        COMMIT;
+
+        -- Step 4: Send validation failure email
+        payment_Vali_failure_det_email(l_parent_request_id);
+
+        -- Step 5: Archive and purge error records
+        l_file_count := 0;
+        error_records_archive_ins(l_parent_request_id);
+
+        -- Step 6: Submit SFTP concurrent request if file was created
+        SELECT COUNT(*)
+        INTO   l_file_count
+        FROM   XXOA_PAYMENT_OU_SIB_STG
+        WHERE  REQUEST_ID = l_parent_request_id
+        AND    FILE_NAME IS NOT NULL;
+
+        fnd_file.put_line(fnd_file.LOG, 'L_VALID: ' || L_VALID || '  l_file_count: ' || l_file_count);
+
+        IF l_file_count > 0 AND L_VALID = 'Y' THEN
+          l_request_id := NULL;
+          BEGIN
+            fnd_global.apps_initialize(l_user_id, l_resp_id, l_resp_appl_id);
+            -- TODO: Update properties file path for Bank Sohar
+            l_shr_file_path := '/EBSapps/appl/ap/12.0.0/bin/XXOA_AP_SIB_BANK_SFTP.properties';
+            l_request_id    := fnd_request.submit_request(
+                                   application => 'XXOA',
+                                   program     => 'XXOA_AP_SIB_BANK_SFTP',  -- TODO: Confirm SFTP program name
+                                   description => NULL,
+                                   start_time  => NULL,
+                                   sub_request => FALSE,
+                                   argument1   => l_shr_file_path
+                               );
+            IF l_request_id = 0 THEN
+              fnd_file.put_line(fnd_file.LOG, 'Concurrent request failed to submit');
+            ELSE
+              fnd_file.put_line(fnd_file.LOG, 'Successfully Submitted the Concurrent Request: ' || l_request_id);
+            END IF;
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG, 'Error While Submitting Concurrent Request: ' || TO_CHAR(SQLCODE) || '-' || SQLERRM);
+          END;
+          COMMIT;
+        END IF;
+
+        -- Step 7: Log bank account and bank name for audit
+        BEGIN
+          SELECT cba.bank_account_name,
+                 hp.party_name
+          INTO   l_bank_account_name,
+                 l_bank_name
+          FROM   ap_checks_all ac,
+                 ce_bank_acct_uses_all cbu,
+                 ce_bank_accounts cba,
+                 hz_parties hp
+          WHERE  ac.ce_bank_acct_use_id  = cbu.bank_acct_use_id
+          AND    cbu.bank_account_id     = cba.bank_account_id
+          AND    cba.bank_id             = hp.party_id
+          AND    DECODE(SUBSTR(TRIM(ac.checkrun_name), 1, 5), 'Quick', ac.check_id, ac.checkrun_id) = P_BATCH;
+          fnd_file.put_line(fnd_file.LOG, 'Bank Account Name : ' || l_bank_account_name);
+          fnd_file.put_line(fnd_file.LOG, 'Bank Name         : ' || l_bank_name);
+        END;
+
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG, 'EXCEPTION in csv: ' || SQLCODE || ':::' || SUBSTR(SQLERRM, 1, 200));
+      END;
+    END;
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.LOG, '');
+      fnd_file.put_line(fnd_file.LOG, 'IN MAIN EXCEPTION: ' || SQLCODE || ':::' || v_step || SUBSTR(SQLERRM, 1, 200));
+  END outbound_validation;
+
+
+  ---------------------------------------------------------------------------
+  -- PROCEDURE: Insert_pymt_datatostg
+  -- Extracts AP payment data from EBS source tables and inserts into
+  -- XXOA_PAYMENT_OU_SIB_STG. Follows NBO template structure exactly.
+  ---------------------------------------------------------------------------
+  PROCEDURE Insert_pymt_datatostg(
+      P_BATCH        IN  NUMBER,
+      P_record_count OUT NUMBER,
+      P_request_id   IN  NUMBER
+  )
+  IS
+    l_attribute_category VARCHAR2(100);
+    l_ext_bank_acct_id   NUMBER;
+    l_swift_code         VARCHAR2(150);
+    l_remit_account_name VARCHAR2(80);
+    l_check_count        NUMBER := 0;
+    l_count              NUMBER := 0;
+    l_batch              NUMBER;
+    l_request_id         NUMBER;
+
+    ---------------------------------------------------------------------------
+    -- Main extraction cursor - maps EBS AP/IBY tables to SIB staging columns
+    -- Follows NBO cur_insert pattern with SIB-specific field mapping
+    ---------------------------------------------------------------------------
+    CURSOR cur_insert(p_batch NUMBER, p_request_id NUMBER) IS
+      SELECT DISTINCT
+        -- Field 1: DebitAccount - company debit bank account (no special chars)
+        REGEXP_REPLACE(ba.BANK_ACCOUNT_NUM, '[^0-9A-Za-z]', '')              AS debit_account,
+        -- Field 2: DebitCurrency - ISO 4217 currency of debit account
+        ba.CURRENCY_CODE                                                       AS debit_currency,
+        -- Field 3: ValueDate - payment date (written as DD/MM/YYYY in CSV cursor)
+        ch.check_date                                                          AS value_date,
+        -- Field 4: CreditAccount - IBAN if available, else local account number
+        -- For Oman (OM): use local account; for IBAN countries: use IBAN
+        CASE
+          WHEN suppl_bank.BeneficiaryAccountCountry = 'OM'
+          THEN TO_CHAR(suppl_bank.BeneficiaryAccountNumber)
+          ELSE NVL(suppl_bank.iban_code, TO_CHAR(suppl_bank.BeneficiaryAccountNumber))
+        END                                                                    AS credit_account,
+        -- Field 5: TransferAmount - payment amount
+        ch.AMOUNT                                                              AS transfer_amount,
+        -- Field 6: BulkCustRefId - optional, blank per spec
+        NULL                                                                   AS bulkcustrefid,
+        -- Field 7: ChargeType - OUR (all charges to ordering party)
+        -- TODO: Business to confirm OUR vs SHA
+        'OUR'                                                                  AS chargetype,
+        -- Field 8: TransferPurpose - mandatory for AE/CN/IN
+        -- Defaulted via validation step from XXOA_SIB_DEFAULT_PC lookup if null
+        aisca.attribute6                                                       AS transferpurpose,
+        -- Field 9: BenBankSwiftBICCode - SWIFT/BIC (11 chars max)
+        SUBSTR(suppl_bank.BeneficiaryBankBICCode, 1, 11)                      AS benbankswiftbiccode,
+        -- Field 10: BranchCode - optional, blank
+        NULL                                                                   AS branchcode,
+        -- Field 11: BankCode - optional, blank
+        NULL                                                                   AS bankcode,
+        -- Field 12: BeneficiaryName - vendor name, no special chars, max 35
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryName, '[^0-9A-Za-z ]', ' '), 1, 35) AS beneficiaryname,
+        -- Field 13: BeneficiaryReference - optional, blank
+        NULL                                                                   AS beneficiaryreference,
+        -- Field 14: BulkReference - optional, blank
+        NULL                                                                   AS bulkreference,
+        -- Field 15: FTCustRefId - payment voucher number for reconciliation
+        -- TODO: Business to confirm. Using CHECK_NUMBER as payment voucher.
+        ch.CHECK_NUMBER                                                        AS ftcustrefid,
+        -- Field 16: CBO / Main Transfer of Purpose
+        -- TODO: Discuss with business team and Bank Sohar for CBO purpose code mapping
+        NULL                                                                   AS cbo,
+        -- Field 17: PaymentDetails - invoice numbers separated by '-', up to 143 chars
+        SUBSTR(
+          (SELECT LISTAGG(inv.invoice_num, '-') WITHIN GROUP (ORDER BY inv.invoice_num)
+           FROM   apps.ap_invoices_all inv,
+                  apps.ap_invoice_payments_all pay
+           WHERE  inv.invoice_id = pay.invoice_id
+           AND    pay.check_id   = ch.check_id),
+          1, 143)                                                              AS paymentdetails,
+        -- Field 18: PaymentCurrency - invoice/payment currency (ISO 4217)
+        ch.CURRENCY_CODE                                                       AS paymentcurrency,
+        -- Field 19: BenBranchName - optional, blank
+        NULL                                                                   AS benbranchname,
+        -- Field 20: BenBankName - optional, blank
+        NULL                                                                   AS benbankname,
+        -- Field 21: BenAddressLine1 - beneficiary address, max 33 chars
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryAddress, '[^0-9A-Za-z ]', ' '), 1, 33) AS benaddressline1,
+        -- Field 22: BenAddressLine2 - max 33 chars
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryAddressLine2, '[^0-9A-Za-z ]', ' '), 1, 33) AS benaddressline2,
+        -- Field 23: BenAddressLine3 (city) - max 30 chars
+        SUBSTR(REGEXP_REPLACE(suppl_bank.BeneficiaryCity, '[^0-9A-Za-z ]', ' '), 1, 30) AS benaddressline3,
+        -- Field 24: BenBankAddressLine1 - optional, blank
+        NULL                                                                   AS benbankaddressline3,
+        -- Field 25: BenBankCountry - ISO 3166 2-char country code
+        suppl_bank.BeneficiaryAccountCountry                                  AS benbankcountry,
+        -- Field 26: NotifyBen - optional, blank
+        NULL                                                                   AS notifyben,
+        -- Field 27: NotifyBenEmail - optional, blank
+        NULL                                                                   AS notifybenemail,
+        -- Field 28: NotifyBenChoice - optional, blank
+        NULL                                                                   AS notifybenchoice,
+        -- Fields 29-31: BenBranchAddress - optional, blank
+        NULL                                                                   AS benbranchaddress1,
+        NULL                                                                   AS benbranchaddress2,
+        NULL                                                                   AS benbranchaddresscity3,
+        -- Field 32: ServiceCode
+        -- IFSC code for INR payments; Sort Code for GBP payments
+        CASE
+          WHEN ch.CURRENCY_CODE = 'INR' THEN suppl_bank.BeneficiaryIFSCCode
+          WHEN ch.CURRENCY_CODE = 'GBP' THEN suppl_bank.BeneficiarySortCode
+          ELSE NULL
+        END                                                                    AS servicecode,
+        -- Field 33: ServiceFX - special FX rate from treasury
+        -- TODO: Business to confirm if special FX rate is used for Sohar
+        NULL                                                                   AS servicefx,
+        -- Field 34: RateCode - treasury rate code
+        -- TODO: Business to confirm if rate code is used for Sohar
+        NULL                                                                   AS ratecode,
+        -- Fields 35-44: Optional fields, all blank per spec
+        NULL                                                                   AS numberofrecords,
+        NULL                                                                   AS batchheaderid,
+        NULL AS r1, NULL AS r2, NULL AS r3, NULL AS r4, NULL AS r5,
+        NULL AS r6, NULL AS r7, NULL AS r8, NULL AS r9,
+        -- Control columns for staging
+        NULL                                                                   AS file_name,
+        DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) AS checkrun_id,
+        ch.checkrun_name                                                        AS checkrun_name,
+        br.bank_name                                                            AS bank_name,
+        br.BANK_HOME_COUNTRY                                                    AS bank_country,
+        NULL                                                                    AS validation_status,
+        NULL                                                                    AS validation_remarks,
+        p_request_id                                                            AS request_id,
+        NULL                                                                    AS record_count,
+        NULL                                                                    AS retcode,
+        suppl_bank.ext_bank_account_id
+      FROM
+        ap_checks_all                    ch,
+        ce_bank_accounts                 ba,
+        ce_bank_acct_uses_all            cbau,
+        ce_bank_branches_v               br,
+        ap_invoice_payments_all          aipa,
+        ap.ap_invoices_all               aia,
+        ap.ap_inv_selection_criteria_all aisca,
+        iby_payments_all                 ipa,
+        fnd_lookup_values                flv,
+        -- Beneficiary/Supplier bank details subquery (same pattern as NBO)
+        (
+          SELECT
+            aps.vendor_name                                          AS BeneficiaryName,
+            ass.ADDRESS_LINE1                                        AS BeneficiaryAddress,
+            ass.ADDRESS_LINE2                                        AS BeneficiaryAddressLine2,
+            ass.ADDRESS_LINE3                                        AS BeneficiaryAddressLine3,
+            ass.CITY                                                 AS BeneficiaryCity,
+            ass.STATE                                                AS BeneficiaryState,
+            ass.ZIP                                                  AS BeneficiaryZip,
+            hcp.email_address                                        AS BeneficiaryEmail,
+            REGEXP_REPLACE(ieb.bank_account_num, '[^0-9A-Za-z]','') AS BeneficiaryAccountNumber,
+            ieb.bank_account_name                                    AS BeneficiaryAccountName,
+            ass.country                                              AS BeneficiaryAccountCountry,
+            ieb.iban                                                 AS iban_code,
+            ieb.ext_bank_account_id,
+            ieb.currency_code                                        AS BeneficiaryAccountCurrency,
+            ieb.attribute1                                           AS BeneficiaryBankBICCode,
+            NVL(ieb.attribute3, ieb.attribute2)                      AS BeneficiaryIFSCCode,  -- IFSC for INR
+            ieb.attribute4                                           AS BeneficiarySortCode,   -- Sort code for GBP
+            -- TODO: Confirm attribute4 is Sort Code in your IBY bank account DFF setup
+            party_bank.party_name                                    AS BeneficiaryBankName,
+            branch_prof.organization_name                            AS BeneficiaryBranchName,
+            iep.ext_payee_id,
+            iep.payee_party_id
+          FROM
+            hz_parties               party_supp,
+            ap_suppliers             aps,
+            hz_party_sites           site_supp,
+            ap_supplier_sites_all    ass,
+            iby_external_payees_all  iep,
+            iby_pmt_instr_uses_all   ipi,
+            iby_ext_bank_accounts    ieb,
+            hz_parties               party_bank,
+            hz_parties               party_branch,
+            hz_organization_profiles bank_prof,
+            hz_organization_profiles branch_prof,
+            hz_contact_points        hcp
+          WHERE party_supp.party_id        = aps.party_id
+          AND   party_supp.party_id        = site_supp.party_id
+          AND   site_supp.party_site_id    = ass.party_site_id
+          AND   ass.vendor_id              = aps.vendor_id
+          AND   iep.payee_party_id         = party_supp.party_id
+          AND   iep.party_site_id          = site_supp.party_site_id
+          AND   iep.supplier_site_id       = ass.vendor_site_id
+          AND   iep.ext_payee_id           = ipi.ext_pmt_party_id(+)
+          AND   ipi.instrument_id(+)       = ieb.ext_bank_account_id
+          AND   ieb.bank_id                = party_bank.party_id
+          AND   ieb.branch_id              = party_branch.party_id
+          AND   party_branch.party_id      = branch_prof.party_id
+          AND   party_bank.party_id        = bank_prof.party_id
+          AND   site_supp.party_site_id    = hcp.owner_table_id(+)
+          AND   hcp.contact_point_type(+)  = 'EMAIL'
+          AND   hcp.status(+)              = 'A'
+          AND   hcp.owner_table_name(+)    = 'HZ_PARTY_SITES'
+          AND   hcp.primary_flag(+)        = 'Y'
+        ) suppl_bank
+      WHERE ch.ce_bank_acct_use_id            = cbau.bank_acct_use_id
+      AND   cbau.bank_account_id              = ba.bank_account_id
+      AND   ba.bank_branch_id                 = br.branch_party_id
+      AND   ch.check_id                       = aipa.check_id
+      AND   ch.checkrun_id                    = aisca.checkrun_id(+)
+      AND   aia.invoice_id                    = aipa.invoice_id
+      AND   ch.payment_id                     = ipa.payment_id(+)
+      AND   ipa.payments_complete_flag(+)     = 'Y'
+      AND   suppl_bank.payee_party_id(+)      = ipa.payee_party_id
+      AND   suppl_bank.ext_bank_account_id(+) = ch.external_bank_account_id
+      AND   suppl_bank.ext_payee_id(+)        = ipa.ext_payee_id
+      AND   ch.attribute_category            IS NULL
+      -- Bank Sohar lookup filter: only process payments from Sohar bank accounts
+      AND   flv.lookup_type                   = 'XXOA_SIB_EBANKING_BANK_ACCOUNT' -- TODO: Confirm lookup name
+      AND   flv.enabled_flag                  = 'Y'
+      AND   UPPER(flv.attribute_category)     = UPPER('EBanking Bank Accounts')
+      AND   UPPER(br.bank_name)               = UPPER(flv.attribute1)
+      AND   UPPER(ch.bank_account_name)       = UPPER(flv.attribute2)
+      AND   flv.language                      = 'US'
+      AND   ch.status_lookup_code             = 'NEGOTIABLE'
+      AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = p_batch
+      AND   ch.org_id                         = cbau.org_id
+      AND   ch.org_id                         = aipa.org_id
+      AND   UPPER(br.bank_name)               LIKE '%SOHAR%'; -- Safety filter
+
+  BEGIN
+    SELECT COUNT(1)
+    INTO   l_check_count
+    FROM   ap_checks_all ac
+    WHERE  DECODE(SUBSTR(TRIM(ac.checkrun_name), 1, 5), 'Quick', ac.check_id, ac.checkrun_id) = P_BATCH;
+    fnd_file.put_line(fnd_file.log, 'Check Count: ' || l_check_count);
+
+    l_batch      := p_batch;
+    l_request_id := P_request_id;
+
+    FOR c1 IN cur_insert(l_batch, l_request_id)
+    LOOP
+      -- Skip records with null external bank account
+      IF c1.ext_bank_account_id IS NULL THEN
+        fnd_file.put_line(fnd_file.log,
+          'External Bank account ID is null for batch: ' || c1.CHECKRUN_NAME ||
+          '. Record not inserted in SIB staging table.');
+      -- Skip foreign records with null SWIFT code
+      ELSIF c1.benbankswiftbiccode IS NULL AND NVL(c1.benbankcountry, 'XX') <> 'OM' THEN
+        fnd_file.put_line(fnd_file.log,
+          'Swift Code is null for Vendor: ' || c1.BENEFICIARYNAME ||
+          ', Account: ' || c1.credit_account ||
+          ', Batch: ' || c1.CHECKRUN_NAME ||
+          '. Record not inserted in SIB staging table.');
+      ELSE
+        fnd_file.put_line(fnd_file.log, 'Inserting record for batch: ' || c1.CHECKRUN_NAME);
+
+        INSERT INTO XXOA.XXOA_PAYMENT_OU_SIB_STG
+        (
+          DEBIT_ACCOUNT,
+          DEBIT_CURRENCY,
+          VALUE_DATE,
+          CREDIT_ACCOUNT,
+          TRANSFER_AMOUNT,
+          BULKCUSTREFID,
+          CHARGETYPE,
+          TRANSFERPURPOSE,
+          BENBANKSWIFTBICCODE,
+          BRANCHCODE,
+          BANKCODE,
+          BENEFICIARYNAME,
+          BENEFICIARYREFERENCE,
+          BULKREFERENCE,
+          FTCUSTREFID,
+          CBO,
+          PAYMENTDETAILS,
+          PAYMENTCURRENCY,
+          BENBRANCHNAME,
+          BENBANKNAME,
+          BENADDRESSLINE1,
+          BENADDRESSLINE2,
+          BENADDRESSLINE3,
+          BENBANKADDRESSLINE3,
+          BENBANKCOUNTRY,
+          NOTIFYBEN,
+          NOTIFYBENEMAIL,
+          NOTIFYBENCHOICE,
+          BENBRANCHADDRESS1,
+          BENBRANCHADDRESS2,
+          BENBRANCHADDRESSCITY3,
+          SERVICECODE,
+          SERVICEFX,
+          RATECODE,
+          NUMBEROFRECORDS,
+          BATCHHEADERID,
+          R1, R2, R3, R4, R5, R6, R7, R8, R9,
+          FILE_NAME,
+          CHECKRUN_ID,
+          CHECKRUN_NAME,
+          BANK_NAME,
+          BANK_COUNTRY,
+          VALIDATION_STATUS,
+          VALIDATION_REMARKS,
+          REQUEST_ID,
+          RECORD_COUNT,
+          RETCODE
+        )
+        VALUES
+        (
+          c1.debit_account,
+          c1.debit_currency,
+          c1.value_date,
+          c1.credit_account,
+          c1.transfer_amount,
+          c1.bulkcustrefid,
+          c1.chargetype,
+          c1.transferpurpose,
+          c1.benbankswiftbiccode,
+          c1.branchcode,
+          c1.bankcode,
+          c1.beneficiaryname,
+          c1.beneficiaryreference,
+          c1.bulkreference,
+          c1.ftcustrefid,
+          c1.cbo,
+          c1.paymentdetails,
+          c1.paymentcurrency,
+          c1.benbranchname,
+          c1.benbankname,
+          c1.benaddressline1,
+          c1.benaddressline2,
+          c1.benaddressline3,
+          c1.benbankaddressline3,
+          c1.benbankcountry,
+          c1.notifyben,
+          c1.notifybenemail,
+          c1.notifybenchoice,
+          c1.benbranchaddress1,
+          c1.benbranchaddress2,
+          c1.benbranchaddresscity3,
+          c1.servicecode,
+          c1.servicefx,
+          c1.ratecode,
+          c1.numberofrecords,
+          c1.batchheaderid,
+          c1.r1, c1.r2, c1.r3, c1.r4, c1.r5,
+          c1.r6, c1.r7, c1.r8, c1.r9,
+          c1.file_name,
+          c1.checkrun_id,
+          c1.checkrun_name,
+          c1.bank_name,
+          c1.bank_country,
+          c1.validation_status,
+          c1.validation_remarks,
+          c1.request_id,
+          c1.record_count,
+          c1.retcode
+        );
+
+        l_count := l_count + 1;
+      END IF;
+    END LOOP;
+
+    -- Rollback if inserted count does not match expected check count
+    BEGIN
+      IF l_count <> l_check_count THEN
+        fnd_file.put_line(fnd_file.log,
+          'WARNING: Inserted count (' || l_count || ') <> check count (' || l_check_count || '). Rolling back.');
+        ROLLBACK;
+      ELSE
+        COMMIT;
+        fnd_file.put_line(fnd_file.log, 'Successfully inserted ' || l_count || ' records into XXOA_PAYMENT_OU_SIB_STG.');
+      END IF;
+    END;
+
+    P_record_count := l_count;
+
+  END Insert_pymt_datatostg;
+
+
+  ---------------------------------------------------------------------------
+  -- PROCEDURE: payment_Vali_failure_det_email
+  -- Sends validation failure report as CSV attachment via UTL_SMTP.
+  -- Follows NBO template exactly with SIB-specific lookup names.
+  ---------------------------------------------------------------------------
+  PROCEDURE payment_Vali_failure_det_email(
+      p_request_id IN NUMBER
+  )
+  IS
+    l_file_name      VARCHAR2(500)   := NULL;
+    g_n_success_code CONSTANT NUMBER := 0;
+    l_mail_conn      utl_smtp.connection;
+    l_v_boundary     VARCHAR2(50)    := '----=*#abc1234321cba#*=';
+    l_pi_step        PLS_INTEGER     := 24573;
+    l_attach_clob    CLOB            := NULL;
+    l_attach_clob1   CLOB            := NULL;
+    l_v_mailhost     VARCHAR2(200);
+    l_v_mail_from    VARCHAR2(200)   := 'applprod@omanair.com';
+    l_v_attach_name  VARCHAR2(200)   := 'SIB_Payment_Validation_Error_' || p_request_id || '_' || TO_CHAR(SYSDATE, 'DDMMYYYY') || '.csv';
+    l_v_mail_subject VARCHAR2(2000)  := 'SIB_Payment_Validation_Error_' || p_request_id || '_' || TO_CHAR(SYSDATE, 'DDMMYYYY');
+    l_v_mail_body    VARCHAR2(4000)  := 'Hi, ' || CHR(10) || CHR(10) ||
+                                        'Please find the attached file for the error records which was generated during Bank Sohar (SIB) Interface Run.' ||
+                                        CHR(10) || CHR(10) || 'Thanks,' || CHR(10) || 'Oman Air Team';
+    l_v_mail_to      VARCHAR2(1000);
+    l_v_mail_id      VARCHAR2(1000);
+    l_n_loop_ctr     NUMBER;
+    l_v_error_message VARCHAR2(2000);
+    l_v_mail_to_flag VARCHAR2(1);
+    l_e_exception    EXCEPTION;
+    to_email_id      VARCHAR2(250);
+
+    -- Recipient list from SIB-specific lookup
+    CURSOR l_to_email_cur IS
+      SELECT LISTAGG(flv.description, ',') WITHIN GROUP (ORDER BY flv.description) AS email_id
+      FROM   apps.fnd_lookup_values flv
+      WHERE  flv.lookup_type  = 'XXOA_SIB_TO_EMAIL_ADDRESS'  -- TODO: Confirm lookup name
+      AND    flv.enabled_flag = 'Y'
+      AND    flv.language     = 'US';
+
+    -- Failed records to include in attachment
+    CURSOR l_get_erred_rec_cur IS
+      SELECT DISTINCT CHECKRUN_NAME,
+                      VALIDATION_STATUS,
+                      VALIDATION_REMARKS
+      FROM   XXOA_PAYMENT_OU_SIB_STG
+      WHERE  REQUEST_ID        = p_request_id
+      AND    VALIDATION_STATUS = 'F'
+      AND    VALIDATION_REMARKS IS NOT NULL;
+
+    TYPE l_get_erred_rec_tab IS TABLE OF l_get_erred_rec_cur%ROWTYPE INDEX BY PLS_INTEGER;
+    l_error_record_tab l_get_erred_rec_tab;
+
+  BEGIN
+    SELECT flv.description
+    INTO   l_v_mailhost
+    FROM   apps.fnd_lookup_values flv
+    WHERE  flv.lookup_type  = 'XXOA_SIB_MAIL_HOST'  -- TODO: Confirm lookup name
+    AND    flv.enabled_flag = 'Y'
+    AND    flv.language     = 'US';
+
+    IF l_v_mail_from IS NULL THEN
+      l_v_error_message := 'XXOA Bank Sohar FROM LIST Profile value is not defined';
+      RAISE l_e_exception;
+    END IF;
+
+    IF l_v_mailhost IS NULL THEN
+      l_v_error_message := 'XXOA Bank Sohar MAIL HOST Profile value is not defined';
+      RAISE l_e_exception;
+    END IF;
+
+    BEGIN
+      SELECT 'Batch Name' || ' , ' || 'Validation Status' || ' , ' || 'Validation Remarks'
+      INTO   l_attach_clob
+      FROM   DUAL;
+    EXCEPTION
+      WHEN OTHERS THEN
+        l_v_error_message := 'Error fetching header column details: ' || SUBSTR(SQLERRM, 1, 3000);
+        RAISE l_e_exception;
+    END;
+
+    l_n_loop_ctr := 0;
+    FOR l_get_erred_rec_cur_rec IN l_get_erred_rec_cur
+    LOOP
+      BEGIN
+        l_n_loop_ctr := l_n_loop_ctr + 1;
+        l_error_record_tab(l_n_loop_ctr).checkrun_name      := l_get_erred_rec_cur_rec.checkrun_name;
+        l_error_record_tab(l_n_loop_ctr).validation_status  := l_get_erred_rec_cur_rec.validation_status;
+        l_error_record_tab(l_n_loop_ctr).validation_remarks := l_get_erred_rec_cur_rec.validation_remarks;
+      EXCEPTION
+        WHEN OTHERS THEN
+          l_v_error_message := SUBSTR('Unexpected error fetching erred records: ' || SQLERRM, 0, 1999);
+          RAISE l_e_exception;
+          fnd_file.put_line(fnd_file.log, 'Error fetching records: ' || SQLERRM);
+      END;
+    END LOOP;
+
+    IF l_n_loop_ctr <> 0 THEN
+      l_mail_conn := utl_smtp.open_connection(l_v_mailhost, 25);
+      utl_smtp.helo(l_mail_conn, l_v_mailhost);
+      utl_smtp.mail(l_mail_conn, l_v_mail_from);
+
+      FOR l_to_email_rec IN l_to_email_cur
+      LOOP
+        l_v_mail_id := l_to_email_rec.email_id;
+        utl_smtp.rcpt(l_mail_conn, l_v_mail_id);
+        l_v_mail_to := l_v_mail_to || l_v_mail_id || ',';
+        fnd_file.put_line(fnd_file.log, 'Sending to: ' || l_v_mail_id);
+      END LOOP;
+
+      utl_smtp.rcpt(l_mail_conn, l_v_mail_id);
+      utl_smtp.open_data(l_mail_conn);
+      utl_smtp.write_data(l_mail_conn, 'Date: '    || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH24:MI:SS') || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'To: '      || l_v_mail_to      || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'From: '    || l_v_mail_from    || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Subject: ' || l_v_mail_subject || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Reply-To: '|| l_v_mail_from    || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'MIME-Version: 1.0'             || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Content-Type: multipart/mixed; boundary="' || l_v_boundary || '"' || utl_tcp.crlf || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, '--' || l_v_boundary            || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Content-Type: text/plain; charset="iso-8859-1"' || utl_tcp.crlf || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, l_v_mail_body);
+      utl_smtp.write_data(l_mail_conn, utl_tcp.crlf || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, '--' || l_v_boundary            || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Content-Type: ' || NULL || '; name="' || l_v_attach_name || '"' || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, 'Content-Disposition: attachment; filename="' || l_v_attach_name || '"' || utl_tcp.crlf || utl_tcp.crlf);
+
+      FOR l_n_loop_ctr1 IN 0..TRUNC((DBMS_LOB.getlength(l_attach_clob) - 1) / l_pi_step)
+      LOOP
+        utl_smtp.write_data(l_mail_conn, DBMS_LOB.substr(l_attach_clob, l_pi_step, l_n_loop_ctr1 * l_pi_step + 1));
+      END LOOP;
+
+      FOR l_n_loop_ctr IN l_error_record_tab.FIRST..l_error_record_tab.LAST
+      LOOP
+        BEGIN
+          l_attach_clob := NULL;
+          l_attach_clob := CHR(13) || CHR(10);
+          FOR l_n_loop_ctr2 IN 0..TRUNC((DBMS_LOB.getlength(l_attach_clob) - 1) / l_pi_step)
+          LOOP
+            utl_smtp.write_data(l_mail_conn, DBMS_LOB.substr(l_attach_clob, l_pi_step, l_n_loop_ctr2 * l_pi_step + 1));
+          END LOOP;
+          l_attach_clob := REPLACE(l_error_record_tab(l_n_loop_ctr).checkrun_name,      ',', '.') || ' , ' ||
+                           REPLACE(l_error_record_tab(l_n_loop_ctr).validation_status,  ',', '.') || ' , ' ||
+                           REPLACE(l_error_record_tab(l_n_loop_ctr).validation_remarks, ',', '.');
+        EXCEPTION
+          WHEN OTHERS THEN
+            l_v_error_message := SUBSTR('Unexpected error fetching details from table type: ' || SQLERRM, 0, 1999);
+            RAISE l_e_exception;
+            fnd_file.put_line(fnd_file.log, 'Error fetching details from table type: ' || SQLERRM);
+        END;
+
+        FOR l_n_loop_ctr2 IN 0..TRUNC((DBMS_LOB.getlength(l_attach_clob) - 1) / l_pi_step)
+        LOOP
+          utl_smtp.write_data(l_mail_conn, DBMS_LOB.substr(l_attach_clob, l_pi_step, l_n_loop_ctr2 * l_pi_step + 1));
+        END LOOP;
+      END LOOP;
+
+      utl_smtp.write_data(l_mail_conn, utl_tcp.crlf || utl_tcp.crlf);
+      utl_smtp.write_data(l_mail_conn, '--' || l_v_boundary || '--' || utl_tcp.crlf);
+      utl_smtp.close_data(l_mail_conn);
+      utl_smtp.quit(l_mail_conn);
+    END IF;
+
+  EXCEPTION
+    WHEN l_e_exception THEN
+      fnd_file.put_line(fnd_file.log, 'No Eligible failures found! ' || SQLERRM);
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.log, 'Error while sending email: ' || SUBSTR(SQLERRM, 1, 3000));
+  END payment_Vali_failure_det_email;
+
+
+  ---------------------------------------------------------------------------
+  -- PROCEDURE: error_records_archive_ins
+  -- Moves failed staging records to arc table; removes from staging.
+  ---------------------------------------------------------------------------
+  PROCEDURE error_records_archive_ins(
+      p_request_id IN NUMBER
+  )
+  IS
+  BEGIN
+    INSERT INTO XXOA_PAYMENT_OU_SIB_ARC
+      (SELECT *
+       FROM   XXOA_PAYMENT_OU_SIB_STG
+       WHERE  VALIDATION_STATUS = 'F'
+       AND    REQUEST_ID        = p_request_id);
+
+    DELETE FROM XXOA_PAYMENT_OU_SIB_STG
+    WHERE  VALIDATION_STATUS = 'F'
+    AND    REQUEST_ID        = p_request_id;
+
+    COMMIT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.log, 'No Eligible failures found! ' || SQLERRM);
+  END error_records_archive_ins;
+
+
+  ---------------------------------------------------------------------------
+  -- PROCEDURE: xxoa_inbound_ack_ins
+  -- Placeholder for Bank Sohar inbound acknowledgement file processing.
+  -- Procedure name matches the package spec exactly (as per NBO pattern).
+  -- TODO: Implement ack insert logic once Bank Sohar provides ack file spec.
+  ---------------------------------------------------------------------------
+  PROCEDURE xxoa_inbound_ack_ins(
+      p_file_path IN VARCHAR2,
+      p_file_name IN VARCHAR2
+  )
+  IS
+    l_p_flag     VARCHAR2(20) := 'N';
+    l_file_path  VARCHAR2(240);
+    l_error_flag VARCHAR2(10) := 'N';
+  BEGIN
+    SELECT directory_name
+    INTO   l_file_path
+    FROM   dba_directories
+    WHERE  directory_path = p_file_path;
+
+    IF l_file_path IS NULL THEN
+      fnd_file.put_line(fnd_file.log, 'Error: Directory Not Found');
+    END IF;
+
+    fnd_file.put_line(fnd_file.log, 'Directory Name: ' || l_file_path);
+
+    BEGIN
+      fnd_file.put_line(fnd_file.log, '-----Inserting into the staging table------------');
+      -- TODO: Implement Bank Sohar ack file processing once spec is received
+    EXCEPTION
+      WHEN OTHERS THEN
+        l_error_flag := 'Y';
+        fnd_file.put_line(fnd_file.LOG, 'Error while Updating Staging table: ' || SQLERRM);
+    END;
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.log, SQLERRM);
+  END xxoa_inbound_ack_ins;
+
+END XXOA_AP_SIB_PAYMT_OUTB;
+/
