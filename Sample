@@ -1,12 +1,23 @@
-IF r1.TRANSFER_AMOUNT IS NOT NULL THEN
-            IF INSTR(TO_CHAR(r1.TRANSFER_AMOUNT), '.') > 0 THEN
-              IF LENGTH(SUBSTR(TO_CHAR(r1.TRANSFER_AMOUNT),
-                               INSTR(TO_CHAR(r1.TRANSFER_AMOUNT), '.') + 1)) > 3 THEN
-                l_validation_status := 'F';
-                RETCODE             := 1;
-                l_retcode           := 1;
-                l_err_msg           := l_err_msg || CHR(10) || 'TRANSFER_AMOUNT cannot have more than 3 decimal places' || CHR(59);
-                fnd_file.put_line(fnd_file.LOG, 'TRANSFER_AMOUNT exceeds 3 decimal places: ' || r1.CHECKRUN_NAME);
-              END IF;
-            END IF;
-          END IF;
+-- Run this first to see available payment batches
+SELECT DISTINCT 
+  checkrun_id,
+  checkrun_name,
+  status_lookup_code,
+  bank_account_name,
+  check_date
+FROM ap_checks_all
+WHERE status_lookup_code = 'NEGOTIABLE'
+AND UPPER(bank_account_name) LIKE '%SOHAR%'
+ORDER BY check_date DESC;
+```
+
+This will show you all **NEGOTIABLE** payments from Sohar bank accounts.
+
+---
+
+**Step 2 — Pick any `CHECKRUN_ID` from the results and use it:**
+
+For example if result shows:
+```
+CHECKRUN_ID = 12345
+CHECKRUN_NAME = TEST_SOHAR_BATCH
