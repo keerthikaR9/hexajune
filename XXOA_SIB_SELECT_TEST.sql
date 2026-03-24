@@ -256,4 +256,13 @@ AND   ch.status_lookup_code             = 'NEGOTIABLE'
 AND   ch.org_id                         = cbau.org_id
 AND   ch.org_id                         = aipa.org_id
 AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446
-AND   UPPER(br.bank_name)               LIKE '%SOHAR%';
+AND   UPPER(br.bank_name)               LIKE '%SOHAR%'
+AND   EXISTS (
+      SELECT 1
+      FROM   fnd_lookup_values flv
+      WHERE  flv.lookup_type           = 'XXOA_SIB_EBANKING_BANK_ACCOUNT'
+      AND    flv.enabled_flag          = 'Y'
+      AND    UPPER(flv.attribute_category) = UPPER('Ebanking Bank Accounts')
+      AND    UPPER(br.bank_name)       = UPPER(flv.attribute1)
+      AND    UPPER(ch.bank_account_name) = UPPER(flv.attribute2)
+      AND    flv.language              = 'US');
