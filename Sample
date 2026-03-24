@@ -70,3 +70,79 @@ WHERE ch.ce_bank_acct_use_id = cbau.bank_acct_use_id
 AND   cbau.bank_account_id   = ba.bank_account_id
 AND   ba.bank_branch_id      = br.branch_party_id
 AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
+
+SELECT DISTINCT
+  ch.checkrun_name,
+  ch.status_lookup_code,
+  ch.attribute_category,
+  ch.bank_account_name,
+  br.bank_name
+FROM ap_checks_all          ch,
+     ce_bank_accounts        ba,
+     ce_bank_acct_uses_all   cbau,
+     ce_bank_branches_v      br
+WHERE ch.ce_bank_acct_use_id = cbau.bank_acct_use_id
+AND   cbau.bank_account_id   = ba.bank_account_id
+AND   ba.bank_branch_id      = br.branch_party_id
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446
+AND   ch.status_lookup_code  = 'NEGOTIABLE'
+AND   ch.attribute_category IS NULL;
+
+
+SELECT DISTINCT
+  ch.checkrun_name,
+  suppl_bank.BeneficiaryName,
+  suppl_bank.ext_bank_account_id,
+  suppl_bank.BeneficiaryBankBICCode
+FROM ap_checks_all          ch,
+     iby_payments_all        ipa,
+     (
+       SELECT
+         aps.vendor_name                                          AS BeneficiaryName,
+         ieb.attribute1                                           AS BeneficiaryBankBICCode,
+         ieb.ext_bank_account_id,
+         iep.ext_payee_id,
+         iep.payee_party_id
+       FROM
+         hz_parties               party_supp,
+         ap_suppliers             aps,
+         hz_party_sites           site_supp,
+         ap_supplier_sites_all    ass,
+         iby_external_payees_all  iep,
+         iby_pmt_instr_uses_all   ipi,
+         iby_ext_bank_accounts    ieb,
+         hz_parties               party_bank,
+         hz_parties               party_branch,
+         hz_organization_profiles bank_prof,
+         hz_organization_profiles branch_prof
+       WHERE party_supp.party_id        = aps.party_id
+       AND   party_supp.party_id        = site_supp.party_id
+       AND   site_supp.party_site_id    = ass.party_site_id
+       AND   ass.vendor_id              = aps.vendor_id
+       AND   iep.payee_party_id         = party_supp.party_id
+       AND   iep.party_site_id          = site_supp.party_site_id
+       AND   iep.supplier_site_id       = ass.vendor_site_id
+       AND   iep.ext_payee_id           = ipi.ext_pmt_party_id(+)
+       AND   ipi.instrument_id(+)       = ieb.ext_bank_account_id
+       AND   ieb.bank_id                = party_bank.party_id
+       AND   ieb.branch_id              = party_branch.party_id
+       AND   party_branch.party_id      = branch_prof.party_id
+       AND   party_bank.party_id        = bank_prof.party_id
+     ) suppl_bank
+WHERE ch.payment_id                     = ipa.payment_id(+)
+AND   ipa.payments_complete_flag(+)     = 'Y'
+AND   suppl_bank.payee_party_id(+)      = ipa.payee_party_id
+AND   suppl_bank.ext_bank_account_id(+) = ch.external_bank_account_id
+AND   suppl_bank.ext_payee_id(+)        = ipa.ext_payee_id
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
+
+
+SELECT DISTINCT
+  ch.checkrun_name,
+  ipa.payment_id,
+  ipa.payments_complete_flag
+FROM ap_checks_all   ch,
+     iby_payments_all ipa
+WHERE ch.payment_id               = ipa.payment_id(+)
+AND   ipa.payments_complete_flag(+) = 'Y'
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
