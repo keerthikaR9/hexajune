@@ -146,3 +146,30 @@ FROM ap_checks_all   ch,
 WHERE ch.payment_id               = ipa.payment_id(+)
 AND   ipa.payments_complete_flag(+) = 'Y'
 AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
+
+
+SELECT DISTINCT
+  ch.checkrun_name,
+  ch.external_bank_account_id,
+  ipa.payee_party_id,
+  ipa.ext_payee_id
+FROM ap_checks_all    ch,
+     iby_payments_all ipa
+WHERE ch.payment_id  = ipa.payment_id(+)
+AND   ipa.payments_complete_flag(+) = 'Y'
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
+
+SELECT DISTINCT
+  ch.checkrun_name,
+  aia.invoice_id,
+  aia.vendor_id,
+  aipa.check_id
+FROM ap_checks_all           ch,
+     ap_invoice_payments_all aipa,
+     ap.ap_invoices_all      aia,
+     ap.ap_inv_selection_criteria_all aisca
+WHERE ch.check_id    = aipa.check_id
+AND   aia.invoice_id = aipa.invoice_id
+AND   ch.checkrun_id = aisca.checkrun_id(+)
+AND   ch.org_id      = aipa.org_id
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446;
