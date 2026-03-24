@@ -173,3 +173,87 @@ AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.chec
 AND   ch.org_id                         = cbau.org_id
 AND   ch.org_id                         = aipa.org_id
 AND   UPPER(br.bank_name)               LIKE '%SOHAR%';
+
+
+
+
+
+SELECT DISTINCT
+  REGEXP_REPLACE(ba.BANK_ACCOUNT_NUM, '[^0-9A-Za-z]', '')  AS debit_account,
+  ba.CURRENCY_CODE                                          AS debit_currency,
+  ch.check_date                                             AS value_date,
+  NVL(
+    REGEXP_REPLACE(suppl_bank.iban_code, '[^0-9A-Za-z]', ''),
+    suppl_bank.BeneficiaryAccountNumber
+  )                                                         AS credit_account,
+  TO_CHAR(ch.AMOUNT, 'FM999999999999.990')                  AS transfer_amount,
+  suppl_bank.BeneficiaryName                                AS beneficiaryname,
+  suppl_bank.BeneficiaryBankBICCode                         AS swift_code,
+  ch.checkrun_name,
+  br.bank_name,
+  ch.bank_account_name,
+  suppl_bank.ext_bank_account_id
+FROM
+  ap_checks_all                    ch,
+  ce_bank_accounts                 ba,
+  ce_bank_acct_uses_all            cbau,
+  ce_bank_branches_v               br,
+  ap_invoice_payments_all          aipa,
+  ap.ap_invoices_all               aia,
+  ap.ap_inv_selection_criteria_all aisca,
+  iby_payments_all                 ipa,
+  (
+    SELECT
+      aps.vendor_name                                          AS BeneficiaryName,
+      ass.ADDRESS_LINE1                                        AS BeneficiaryAddress,
+      ass.country                                              AS BeneficiaryAccountCountry,
+      ieb.iban                                                 AS iban_code,
+      REGEXP_REPLACE(ieb.bank_account_num, '[^0-9A-Za-z]','') AS BeneficiaryAccountNumber,
+      ieb.ext_bank_account_id,
+      ieb.attribute1                                           AS BeneficiaryBankBICCode,
+      NVL(ieb.attribute3, ieb.attribute2)                      AS BeneficiaryIFSCCode,
+      iep.ext_payee_id,
+      iep.payee_party_id
+    FROM
+      hz_parties               party_supp,
+      ap_suppliers             aps,
+      hz_party_sites           site_supp,
+      ap_supplier_sites_all    ass,
+      iby_external_payees_all  iep,
+      iby_pmt_instr_uses_all   ipi,
+      iby_ext_bank_accounts    ieb,
+      hz_parties               party_bank,
+      hz_parties               party_branch,
+      hz_organization_profiles bank_prof,
+      hz_organization_profiles branch_prof
+    WHERE party_supp.party_id        = aps.party_id
+    AND   party_supp.party_id        = site_supp.party_id
+    AND   site_supp.party_site_id    = ass.party_site_id
+    AND   ass.vendor_id              = aps.vendor_id
+    AND   iep.payee_party_id         = party_supp.party_id
+    AND   iep.party_site_id          = site_supp.party_site_id
+    AND   iep.supplier_site_id       = ass.vendor_site_id
+    AND   iep.ext_payee_id           = ipi.ext_pmt_party_id(+)
+    AND   ipi.instrument_id(+)       = ieb.ext_bank_account_id
+    AND   ieb.bank_id                = party_bank.party_id
+    AND   ieb.branch_id              = party_branch.party_id
+    AND   party_branch.party_id      = branch_prof.party_id
+    AND   party_bank.party_id        = bank_prof.party_id
+  ) suppl_bank
+WHERE ch.ce_bank_acct_use_id            = cbau.bank_acct_use_id
+AND   cbau.bank_account_id              = ba.bank_account_id
+AND   ba.bank_branch_id                 = br.branch_party_id
+AND   ch.check_id                       = aipa.check_id
+AND   ch.checkrun_id                    = aisca.checkrun_id(+)
+AND   aia.invoice_id                    = aipa.invoice_id
+AND   ch.payment_id                     = ipa.payment_id(+)
+AND   ipa.payments_complete_flag(+)     = 'Y'
+AND   suppl_bank.payee_party_id(+)      = ipa.payee_party_id
+AND   suppl_bank.ext_bank_account_id(+) = ch.external_bank_account_id
+AND   suppl_bank.ext_payee_id(+)        = ipa.ext_payee_id
+AND   ch.attribute_category            IS NULL
+AND   ch.status_lookup_code             = 'NEGOTIABLE'
+AND   ch.org_id                         = cbau.org_id
+AND   ch.org_id                         = aipa.org_id
+AND   DECODE(SUBSTR(TRIM(ch.checkrun_name), 1, 5), 'Quick', ch.check_id, ch.checkrun_id) = 34490446
+AND   UPPER(br.bank_name)               LIKE '%SOHAR%';
