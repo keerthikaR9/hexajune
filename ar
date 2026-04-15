@@ -1,0 +1,186 @@
+SELECT     SUBSTRB(PARTY.PARTY_NAME,1,50)     Customer_Name , 
+    CUST.ACCOUNT_NUMBER                        Customer_Number,
+    CUST.ACCOUNT_NUMBER                        Cust_No,
+    CUST.CUST_ACCOUNT_ID                        Customer_Id,
+    custv.PROFILE_CLASS_ID,
+    site.location,
+ 
+--                ra_customer_trx.bill_to_site_use_id            site_id,
+                ps.CUSTOMER_SITE_USE_ID                   site_id,
+    nvl(SITE.location,'')                                       Location ,
+                party.address1                                              Address1,
+                party.address2                                              Address2,
+                party.address3                                              Address3,
+                party.address4                                              Address4,
+                party.city                                                       City,
+                decode(party.country,'OM','Sultanate of Oman',party.country)                                                  Country,
+                ps.trx_number                                               Invoice_Number    ,
+                ps.trx_date                                                    Doc_Date,
+                ps.CUSTOMER_TRX_ID,
+                ps.CUST_TRX_TYPE_ID,
+                ra_customer_trx.purchase_order                  PO_no,
+                ra_customer_trx.purchase_order_date         PO_date,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code1 ,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code2 ,
+                ps.amount_due_remaining                           Inv_amt_orig,
+                ps.amount_in_dispute                                  disputed_amt,
+                ps.dispute_date                                           dispute_date,                     
+    ps.due_date                                                 Due_Date,
+                (nvl(:p_statement_date, sysdate) - ps.due_date)               Days_due,
+                ps.class                                                        tran_type,
+                nvl(ra_customer_trx.attribute15, rtt.description)     y_ref,
+                ps.ACCTD_AMOUNT_DUE_REMAINING   func_amount
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+     HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND     cust.account_number between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class not in ('CM')
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code = nvl(:p_currency_code, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+UNION ALL
+SELECT     SUBSTRB(PARTY.PARTY_NAME,1,50)     Customer_Name , 
+    CUST.ACCOUNT_NUMBER                        Customer_Number,
+    CUST.ACCOUNT_NUMBER                        Cust_No,
+    CUST.CUST_ACCOUNT_ID                        Customer_Id,
+    custv.PROFILE_CLASS_ID,
+  site.location,
+    
+--                ra_customer_trx.bill_to_site_use_id            site_id,
+                ps.CUSTOMER_SITE_USE_ID                   site_id,
+    nvl(SITE.location,'')                                       Location ,
+                party.address1                                              Address1,
+                party.address2                                              Address2,
+                party.address3                                              Address3,
+                party.address4                                              Address4,
+                party.city                                                       City,
+                decode(party.country,'OM','Sultanate of Oman',party.country)                                                  Country,
+                ps.trx_number                                               Invoice_Number    ,
+                ps.trx_date                                                    Doc_Date,
+                ps.CUSTOMER_TRX_ID,
+                ps.CUST_TRX_TYPE_ID,
+                ra_customer_trx.purchase_order                  PO_no,
+                ra_customer_trx.purchase_order_date         PO_date,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code1 ,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code2 ,
+                ps.amount_due_remaining                           Inv_amt_orig,
+                ps.amount_in_dispute                                  disputed_amt,
+                ps.dispute_date                                           dispute_date,                     
+    ps.due_date                                                 Due_Date,
+                (nvl(:p_statement_date, sysdate) - ps.due_date)             Days_due,
+                ps.class                                                        tran_type,
+                nvl(ra_customer_trx.attribute15, rtt.description)     y_ref,
+                ps.ACCTD_AMOUNT_DUE_REMAINING   func_amount
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE,
+    ra_batch_sources_all RBSA,   
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND     cust.account_number between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class in ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+--and     ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code = nvl(:p_currency_code, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <= nvl(:p_statement_date, ps.trx_date)
+UNION ALL
+SELECT     SUBSTRB(PARTY.PARTY_NAME,1,50)     Customer_Name , 
+    CUST.ACCOUNT_NUMBER                        Customer_Number,
+    CUST.ACCOUNT_NUMBER                        Cust_No,
+    CUST.CUST_ACCOUNT_ID                        Customer_Id,
+ custv.PROFILE_CLASS_ID,
+  site.location,
+  
+--                ra_customer_trx.bill_to_site_use_id            site_id,
+                ps.CUSTOMER_SITE_USE_ID                   site_id,
+    nvl(SITE.location,'')                                       Location ,
+                party.address1                                              Address1,
+                party.address2                                              Address2,
+                party.address3                                              Address3,
+                party.address4                                              Address4,
+                party.city                                                       City,
+                decode(party.country,'OM','Sultanate of Oman',party.country)                                                  Country,
+                ps.trx_number                                               Invoice_Number    ,
+                ps.trx_date                                                    Doc_Date,
+                ps.CUSTOMER_TRX_ID,
+                ps.CUST_TRX_TYPE_ID,
+                ra_customer_trx.purchase_order                  PO_no,
+                ra_customer_trx.purchase_order_date         PO_date,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code1 ,
+    nvl(ps.invoice_currency_code,                   :Functional_currency )   Currency_Code2 ,
+                ps.amount_due_remaining                           Inv_amt_orig,
+                ps.amount_in_dispute                                  disputed_amt,
+                ps.dispute_date                                           dispute_date,                     
+    ps.due_date                                                 Due_Date,
+                (nvl(:p_statement_date, sysdate) - ps.due_date)                Days_due,
+                ps.class                                                        tran_type,
+                nvl(ra_customer_trx.attribute15, rtt.description)     y_ref,
+                ps.ACCTD_AMOUNT_DUE_REMAINING   func_amount
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    ra_batch_sources_all RBSA, 
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND     cust.account_number between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO','Topsystem')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class  in  ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.invoice_currency_code = nvl(:p_currency_code, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <= nvl(:p_statement_date, ps.trx_date)
+ORDER BY DOC_DATE
