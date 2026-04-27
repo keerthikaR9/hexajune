@@ -1,0 +1,241 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<!-- $Header: XXOA_APXINPSR_XML.xml 120.2.12020000.2 2013/03/27 04:55:40 harsanan ship $ -->
+<!-- dbdrv: exec java oracle/apps/xdo/oa/util XDOLoader.class java &phase=dat checkfile:~PROD:patch/115/publisher/defs:XXOA_APXINPSR_XML.xml UPLOAD -DB_USERNAME &un_apps -DB_PASSWORD &pw_apps -JDBC_CONNECTION &jdbc_db_addr -LOB_TYPE DATA_TEMPLATE -APPS_SHORT_NAME ~PROD -LOB_CODE XXOA_APXINPSR_XML -LANGUAGE 00 -XDO_FILE_TYPE XML-DATA-TEMPLATE -FILE_NAME &fullpath:~PROD:patch/115/publisher/defs:XXOA_APXINPSR_XML.xml -->
+<!-- GSCC_Category="Xdo Data Definition" -->
+
+<dataTemplate name="XXOA_APXINPSR_XML" defaultPackage="AP_APXINPSR_XMLP_PKG" version="1.0">
+   <properties>
+     <property name="xml_tag_case" value="upper"/>
+   </properties>
+   <parameters>
+      <parameter name="P_DEBUG_SWITCH" dataType="character" defaultValue="Y"/>
+      <!-- <parameter name="P_CONC_REQUEST_ID" dataType="number" defaultValue="0"></parameter> -->
+      <parameter name="P_MIN_PRECISION" dataType="number" defaultValue="0"/>
+      <parameter name="P_FLEXDATA" dataType="character" defaultValue="(SEGMENT1||'\n'||SEGMENT2||'\n'||SEGMENT3||'\n'||SEGMENT4||'\n'||SEGMENT5||'\n'||SEGMENT6||'\n'||SEGMENT7||'\n'||SEGMENT8||'\n'||SEGMENT9||'\n'||SEGMENT10||'\n'||SEGMENT11||'\n'||SEGMENT12||'\n'||SEGMENT13||'\n'||SEGMENT14||'\n'||SEGMENT15||'\n'||SEGMENT16||'\n'||SEGMENT17||'\n'||SEGMENT18||'\n'||SEGMENT19||'\n'||SEGMENT20||'\n'||SEGMENT21||'\n'||SEGMENT22||'\n'||SEGMENT23||'\n'||SEGMENT24||'\n'||SEGMENT25||'\n'||SEGMENT26||'\n'||SEGMENT27||'\n'||SEGMENT28||'\n'||SEGMENT29||'\n'||SEGMENT30)"/>
+      <!--<parameter name="P_SET_OF_BOOKS_ID" dataType="number"/>-->
+      <parameter name="P_TRACE_SWITCH" dataType="character" defaultValue="N"/>
+      <parameter name="P_INCLUDE_INVOICE" dataType="character"/>
+      <parameter name="P_INCLUDE_CREDIT" dataType="character"/>
+      <parameter name="P_FROM_DATE" dataType="date"/>
+      <parameter name="P_TO_DATE" dataType="date"/>
+      <parameter name="P_VENDOR_ID" dataType="character"/>
+      <parameter name="P_VENDOR_TYPE_LOOKUP_CODE" dataType="character"/>
+      <parameter name="SORT_BY_ALTERNATE" dataType="character"/>
+      <parameter name="P_PREPAYMENT_TYPE" dataType="character"/>
+      <parameter name="P_PREPAYMENT_LINE_FLAG" dataType="character"/>
+      <!--<parameter name="P_CHART_OF_ACCOUNTS_ID" dataType="number"/>-->
+   </parameters>
+   <lexicals/>
+   <dataQuery>
+      <sqlStatement name="Q_invoice">
+         <![CDATA[
+		 SELECT i.vendor_id C_vendor_id,
+  i.invoice_currency_code
+  ||i.payment_currency_code c_inv_pmt_curr,
+  i.invoice_currency_code C_invoice_currency_code,
+  i.payment_currency_code C_payment_currency_code,
+  i.invoice_type_lookup_code C_invoice_type_lookup_code,
+  DECODE(i.invoice_type_lookup_code, 'PREPAYMENT', 1, 2) C_sort_type,
+  l1.displayed_field C_invoice_type_dsp,
+  i.invoice_id C_invoice_id,
+  i.invoice_num C_invoice_num,
+  NVL(TO_CHAR(i.doc_sequence_value), i.voucher_num) C_inv_voucher_num,
+  --11864080: Added call to FND_DATE API
+  fnd_date.date_to_chardate(dateval=>i.invoice_date,calendar_aware=> :C_CALENDAR_AWARE_ALT) C_invoice_date,
+  DECODE( i.invoice_type_lookup_code, 'PREPAYMENT', DECODE(i.earliest_settlement_date, '','PERMANENT', fnd_date.date_to_chardate(dateval=> i.earliest_settlement_date, calendar_aware => :C_CALENDAR_AWARE_ALT )),
+  /*Bug11774150*/
+  '') C_earliest_settlement_date,
+  i.invoice_amount C_invoice_amount,
+  i.description C_description,
+  i.payment_status_flag C_payment_status_flag,
+  NVL( AP_INVOICES_UTILITY_PKG.get_amount_withheld( i.invoice_id ), 0) C_withheld_amount,
+  DECODE( i.invoice_type_lookup_code, 'PREPAYMENT', AP_PREPAY_UTILS_PKG.get_prepay_amount_remaining( i.invoice_id ), SUM( NVL(aps.amount_remaining,0) ) ) C_amount_remaining,
+  i.payment_cross_rate C_payment_cross_rate,
+  AP_APXINPSR_XMLP_PKG.c_amount_for_sumformula(i.invoice_type_lookup_code, DECODE ( i.invoice_type_lookup_code , 'PREPAYMENT' , AP_PREPAY_UTILS_PKG.get_prepay_amount_remaining ( i.invoice_id ) , SUM ( NVL ( aps.amount_remaining , 0 ) ) ), i.payment_status_flag, DECODE ( i.invoice_type_lookup_code , 'PREPAYMENT' , DECODE ( i.earliest_settlement_date , '' , 'PERMANENT' , fnd_date.date_to_chardate (dateval => i.earliest_settlement_date, calendar_aware => :C_CALENDAR_AWARE_ALT ) ) , '' ), i.payment_cross_rate, i.invoice_currency_code) C_amount_for_sum,
+  /*Bug11774150*/
+  AP_APXINPSR_XMLP_PKG.c_amount_remaining_convertform(i.payment_cross_rate, DECODE ( i.invoice_type_lookup_code , 'PREPAYMENT' , AP_PREPAY_UTILS_PKG.get_prepay_amount_remaining ( i.invoice_id ) , SUM ( NVL ( aps.amount_remaining , 0 ) ) ), i.invoice_currency_code, i.invoice_type_lookup_code) C_amount_remaining_convert,
+  AP_APXINPSR_XMLP_PKG.c_amount_remaining_dspformula(i.invoice_type_lookup_code, i.payment_status_flag, :C_amount_remaining_trans) C_amount_remaining_dsp,
+  NVL(I.BASE_AMOUNT, I.INVOICE_AMOUNT) AS C_FUNCTIONAL_AMOUNT,
+  (SELECT vendor_name FROM po_vendors WHERE vendor_id = i.vendor_id AND rownum = 1) SUPPLIER_NAME,
+  (SELECT segment1 FROM po_vendors WHERE vendor_id = i.vendor_id AND rownum = 1) SUPPLIER_NUM,
+  (SELECT fu.user_name
+   FROM fnd_user fu
+   WHERE fu.user_id = i.created_by) CREATED_BY
+FROM ap_lookup_codes l1,
+  ap_invoices i,
+  ap_payment_schedules_all aps
+WHERE i.cancelled_date IS NULL
+AND aps.invoice_id      = i.invoice_id
+AND l1.lookup_type      = 'INVOICE TYPE'
+AND l1.lookup_code      = i.invoice_type_lookup_code
+  &C_invoice_dynamic_SQL
+AND i.vendor_id=:C_vendor_id1
+GROUP BY i.vendor_id,
+  i.invoice_currency_code
+  ||i.payment_currency_code,
+  i.invoice_currency_code,
+  i.payment_currency_code,
+  i.invoice_type_lookup_code,
+  DECODE(i.invoice_type_lookup_code, 'PREPAYMENT', 1, 2),
+  l1.displayed_field,
+  i.invoice_id,
+  i.invoice_num,
+  NVL(TO_CHAR(i.doc_sequence_value),i.voucher_num),
+  i.invoice_date,
+  DECODE( i.invoice_type_lookup_code, 'PREPAYMENT', DECODE(i.earliest_settlement_date, '','PERMANENT', fnd_date.date_to_chardate(dateval => i.earliest_settlement_date,calendar_aware => :C_CALENDAR_AWARE_ALT )),''),
+  /*Bug11774150*/
+  i.invoice_amount,
+  i.description,
+  i.payment_status_flag,
+  NVL( AP_INVOICES_UTILITY_PKG.get_amount_withheld( i.invoice_id ), 0),
+  i.payment_cross_rate,
+  I.BASE_AMOUNT,
+  i.CREATED_BY
+  --ORDER BY  5,i.invoice_date, i.invoice_num
+ORDER BY 3 ASC,
+  4 ASC,
+  2 ASC,
+  1 ASC,
+  6 ASC,
+  5,
+  i.invoice_date,
+  i.invoice_num
+]]>
+      </sqlStatement>
+      <sqlStatement name="Q_prepay_line">
+         <![CDATA[SELECT	AIL.invoice_id 	C_prepay_inv_id,
+                to_char(AP_PREPAY_UTILS_PKG.Get_Line_Prepay_Amt_Remaining(AIL.invoice_id,  AIL.line_number ),Fnd_Currency.get_format_mask(AI.invoice_currency_code, 17))                    C_prepay_amount_remaining,
+	AIL.line_number          C_line_number,
+                   ALC.displayed_field   C_line_type,
+                   AIL.description             C_line_description,
+                   to_char(AIL.amount, Fnd_Currency.get_format_mask(AI.invoice_currency_code, 17))  C_line_amount_dsp,
+	PH.segment1 	 C_prepay_po_number,
+	RSH.receipt_num	 C_prepay_receipt_number
+FROM 	AP_INVOICES AI,
+	AP_INVOICE_LINES_ALL AIL,
+	PO_HEADERS_ALL PH,
+	RCV_TRANSACTIONS RTXNS,
+	RCV_SHIPMENT_HEADERS RSH,
+	RCV_SHIPMENT_LINES RSL,
+                AP_LOOKUP_CODES  ALC
+WHERE AI.INVOICE_ID = AIL.INVOICE_ID
+AND AIL.LINE_TYPE_LOOKUP_CODE = 'ITEM'
+AND AI.INVOICE_TYPE_LOOKUP_CODE = 'PREPAYMENT'
+AND AI.PAYMENT_STATUS_FLAG||'' = 'Y'
+AND 0 < AP_PREPAY_UTILS_PKG.Get_Line_Prepay_Amt_Remaining
+                   (AIL.invoice_id,  AIL.line_number)
+AND AIL.PO_HEADER_ID = PH.PO_HEADER_ID (+)
+AND AIL.RCV_TRANSACTION_ID = RTXNS.TRANSACTION_ID (+)
+AND RTXNS.SHIPMENT_LINE_ID = RSL.SHIPMENT_LINE_ID (+)
+AND RSL.SHIPMENT_HEADER_ID = RSH.SHIPMENT_HEADER_ID (+)
+AND ALC.lookup_type (+)  = 'INVOICE LINE TYPE'
+AND ALC.lookup_code (+) = AIL.line_type_lookup_code
+AND :P_prepayment_line_flag = 'Y'
+ and AIL.invoice_id=:C_invoice_id]]>
+      </sqlStatement>
+      <sqlStatement name="Q_vendor">
+         <![CDATA[SELECT   DISTINCT (v.vendor_id)      	C_vendor_id1,
+                   v.vendor_name                               C_vendor_name1,
+	DECODE(:SORT_BY_ALTERNATE, 'Y', UPPER(v.vendor_name_alt),
+             	 UPPER(v.vendor_name)) 	C_sort_vendor_name1,
+	v.segment1		C_vendor_num1
+FROM    ap_invoices i, po_vendors v
+WHERE  0 < AP_PREPAY_UTILS_PKG.get_prepay_amount_remaining(i.invoice_id)
+AND v.vendor_id = i.vendor_id
+AND i.invoice_type_lookup_code =  'PREPAYMENT'
+AND       i.cancelled_date IS NULL
+&C_vendor_dynamic_SQL
+ORDER BY DECODE(:SORT_BY_ALTERNATE, 'Y', UPPER(v.vendor_name_alt), UPPER(v.vendor_name))]]>
+      </sqlStatement>
+   </dataQuery>
+   <dataTrigger name="beforeReportTrigger" source="AP_APXINPSR_XMLP_PKG.beforereport"/>
+   <dataStructure>
+      <element name="P_CONC_REQUEST_ID" dataType="number" value="AP_APXINPSR_XMLP_PKG.P_CONC_REQUEST_ID"/>
+      <element name="P_SET_OF_BOOKS_ID" dataType="number" value="AP_APXINPSR_XMLP_PKG.P_SET_OF_BOOKS_ID"/>
+      <element name="P_CHART_OF_ACCOUNTS_ID" dataType="number" value="AP_APXINPSR_XMLP_PKG.P_CHART_OF_ACCOUNTS_ID"/>
+      <group name="G_C_vendor_id1" dataType="varchar2" source="Q_vendor">
+         <element name="C_sort_vendor_name1" dataType="varchar2" value="C_SORT_VENDOR_NAME1"/>
+         <element name="C_vendor_name1" dataType="varchar2" value="C_VENDOR_NAME1"/>
+         <element name="C_vendor_num1" dataType="varchar2" value="C_VENDOR_NUM1"/>
+         <element name="C_vendor_sum1" function="sum" dataType="number" value="G_invoice.C_amount_for_sum"/>
+         <element name="C_vendor_id1" dataType="number" value="C_VENDOR_ID1"/>
+         <group name="G_c_inv_pmt_curr" dataType="varchar2" source="Q_invoice">
+            <element name="C_invoice_currency_code" dataType="varchar2" value="C_INVOICE_CURRENCY_CODE"/>
+            <element name="C_payment_currency_code" dataType="varchar2" value="C_PAYMENT_CURRENCY_CODE"/>
+            <element name="c_inv_pmt_curr" dataType="varchar2" value="C_INV_PMT_CURR"/>
+            <element name="C_currency_sum" function="sum" dataType="number" value="G_invoice.C_amount_for_sum"/>
+            <element name="C_vendor_id" dataType="number" value="C_VENDOR_ID"/>
+            <element name="C_currency_sum_dsp" function="CURRENCY_FORMAT" dataType="varchar2" value="C_CURRENCY_SUM" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/>
+            <group name="G_C_sort_type" dataType="varchar2" source="Q_invoice">
+               <element name="C_sort_type" dataType="number" value="C_SORT_TYPE"/>
+               <element name="C_type_sum" function="sum" dataType="number" value="G_invoice.C_amount_for_sum"/>
+               <element name="C_type_sum_dsp" function="CURRENCY_FORMAT" dataType="varchar2" value="C_TYPE_SUM" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/>
+               <group name="G_invoice" dataType="varchar2" source="Q_invoice">
+                  <element name="C_inv_voucher_num" dataType="varchar2" value="C_INV_VOUCHER_NUM"/>
+				  <element name="SUPPLIER_NAME" dataType="varchar2" value="SUPPLIER_NAME"/>
+				  <element name="SUPPLIER_NUM" dataType="varchar2" value="SUPPLIER_NUM"/>
+                  <element name="C_invoice_type_dsp" dataType="varchar2" value="C_INVOICE_TYPE_DSP"/>
+                  <element name="C_invoice_num" dataType="varchar2" value="C_INVOICE_NUM"/>
+                  <element name="C_invoice_date" dataType="varchar2" value="C_INVOICE_DATE"/>
+                  <element name="C_earliest_settlement_date" dataType="varchar2" value="C_EARLIEST_SETTLEMENT_DATE"/>
+                  <element name="C_invoice_amount" dataType="number" value="C_INVOICE_AMOUNT"/>
+                  <element name="C_description" dataType="varchar2" value="C_DESCRIPTION"/>
+                  <element name="C_withheld_amount" dataType="number" value="C_WITHHELD_AMOUNT"/>
+                  <element name="C_amount_remaining" dataType="number" value="C_AMOUNT_REMAINING"/>
+				  <element name="C_invoice_currency_code" dataType="varchar2" value="C_INVOICE_CURRENCY_CODE"/>
+				  <element name="C_FUNCTIONAL_AMOUNT" dataType="number" value="C_FUNCTIONAL_AMOUNT"/>
+                  <element name="C_payment_cross_rate" dataType="number" value="C_PAYMENT_CROSS_RATE"/>
+                  <element name="C_invoice_type_lookup_code" dataType="varchar2" value="C_INVOICE_TYPE_LOOKUP_CODE"/>
+                  <element name="C_payment_status_flag" dataType="varchar2" value="C_PAYMENT_STATUS_FLAG"/>
+                  <element name="C_invoice_id" dataType="number" value="C_INVOICE_ID"/>
+                  <element name="C_amount_for_sum" dataType="number" value="C_amount_for_sum"/>
+				  <element name="CREATED_BY" dataType="varchar2" value="CREATED_BY"/>
+                  <element name="C_amount_remaining_trans" function="CURRENCY_FORMAT" dataType="varchar2" value="C_AMOUNT_REMAINING_CONVERT" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/>
+                  <element name="C_amount_remaining_convert" dataType="number" value="C_amount_remaining_convert"/>
+                  <element name="C_amount_remaining_dsp" dataType="varchar2" value="C_amount_remaining_dsp"/>
+                  <element name="C_withheld_amount_dsp" function="CURRENCY_FORMAT" dataType="varchar2" value="C_WITHHELD_AMOUNT" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/>
+                  <element name="C_invoice_amount_dsp" function="CURRENCY_FORMAT" dataType="varchar2" value="C_INVOICE_AMOUNT" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/>
+                  <group name="G_prepay_line" dataType="varchar2" source="Q_prepay_line">
+                     <element name="C_line_number" dataType="number" value="C_LINE_NUMBER"/>
+                     <element name="C_line_type" dataType="varchar2" value="C_LINE_TYPE"/>
+                     <element name="C_line_description" dataType="varchar2" value="C_LINE_DESCRIPTION"/>
+                     <element name="C_line_amount_dsp" dataType="varchar2" value="C_LINE_AMOUNT_DSP"/>
+                     <element name="C_prepay_amount_remaining" dataType="varchar2" value="C_PREPAY_AMOUNT_REMAINING"/>
+                     <element name="C_prepay_po_number" dataType="varchar2" value="C_PREPAY_PO_NUMBER"/>
+                     <element name="C_prepay_receipt_number" dataType="varchar2" value="C_PREPAY_RECEIPT_NUMBER"/>
+                     <element name="C_prepay_inv_id" dataType="number" value="C_PREPAY_INV_ID"/>
+                     <!--element name="C_prepay_amount_remaining_dsp" function="CURRENCY_FORMAT" dataType="varchar2" value="C_PREPAY_AMOUNT_REMAINING" currencyCode="C_INVOICE_CURRENCY_CODE" width="19"/-->
+                  </group>
+               </group>
+            </group>
+         </group>
+      </group>
+      <element name="C_NLS_YES" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_YES_p"/>
+      <element name="C_NLS_NO" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_NO_p"/>
+      <element name="C_NLS_ALL" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_ALL_p"/>
+      <element name="C_NLS_NO_DATA_EXISTS" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_NO_DATA_EXISTS_p"/>
+      <element name="C_NLS_VOID" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_VOID_p"/>
+      <element name="C_NLS_NA" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_NA_p"/>
+      <element name="C_NLS_END_OF_REPORT" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_NLS_END_OF_REPORT_p"/>
+      <element name="C_REPORT_START_DATE" dataType="date" value="AP_APXINPSR_XMLP_PKG.C_REPORT_START_DATE_p"/>
+      <element name="C_COMPANY_NAME_HEADER" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_COMPANY_NAME_HEADER_p"/>
+      <element name="C_BASE_CURRENCY_CODE" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_BASE_CURRENCY_CODE_p"/>
+      <element name="C_BASE_PRECISION" dataType="number" value="AP_APXINPSR_XMLP_PKG.C_BASE_PRECISION_p"/>
+      <element name="C_BASE_MIN_ACCT_UNIT" dataType="number" value="AP_APXINPSR_XMLP_PKG.C_BASE_MIN_ACCT_UNIT_p"/>
+      <element name="C_BASE_DESCRIPTION" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_BASE_DESCRIPTION_p"/>
+      <element name="C_CHART_OF_ACCOUNTS_ID" dataType="number" value="AP_APXINPSR_XMLP_PKG.C_CHART_OF_ACCOUNTS_ID_p"/>
+      <element name="C_CALENDAR_AWARE_ALT" dataType="number" value="AP_APXINPSR_XMLP_PKG.C_CALENDAR_AWARE_ALT_p"/><!--Bug11774150-->
+      <element name="Applications_Template_Report" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.Applications_Template_Report_p"/>
+      <element name="C_vendor_dynamic_SQL" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_vendor_dynamic_SQL_p"/>
+      <element name="C_invoice_dynamic_SQL" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_invoice_dynamic_SQL_p"/>
+      <element name="C_header_vendor_type" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_vendor_type_p"/>
+      <element name="C_header_vendor_name" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_vendor_name_p"/>
+      <element name="C_header_include_invoice" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_include_invoice_p"/>
+      <element name="C_header_include_credit" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_include_credit_p"/>
+      <element name="C_nls_unpaid" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_nls_unpaid_p"/>
+      <element name="C_rep_count" function="count" dataType="number" value="G_c_inv_pmt_curr.C_vendor_id"/>
+      <element name="C_header_show_prepay_dist" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_show_prepay_dist_p"/>
+      <element name="C_header_prepayment_type" dataType="varchar2" value="AP_APXINPSR_XMLP_PKG.C_header_prepayment_type_p"/>
+   </dataStructure>
+   <dataTrigger name="afterReportTrigger" source="AP_APXINPSR_XMLP_PKG.afterreport()"/>
+</dataTemplate>
