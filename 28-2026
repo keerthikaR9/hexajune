@@ -1,0 +1,108 @@
+
+<!-- GSCC_Category="Xdo Data Definition" -->
+<dataTemplate name="XXOAAPINVOICEDTLREP"  version="1.0">
+<properties>
+  <property name="xml_tag_case" value="UPPER"/>
+  <property name="debug_mode"   value="ON"/>
+</properties>
+<parameters>
+	<parameter name="P_PERIOD_FROM"  dataType = "VARCHAR"></parameter>
+	<parameter name="P_PERIOD_TO"  dataType = "VARCHAR"></parameter>
+	<parameter name="P_USERID"  	dataType = "NUMBER"></parameter>
+	<parameter name="P_VENDOR_NAME"  	dataType = "VARCHAR"></parameter>
+</parameters>
+<dataQuery>
+<sqlStatement name="Q_MAIN">
+<![CDATA[
+SELECT DISTINCT
+    APS.VENDOR_NAME,
+    APS.SEGMENT1,
+    APSA.VAT_REGISTRATION_NUM,
+    APSA.VENDOR_SITE_CODE AS SUPPLIER_SITE_CODE,
+    TER.TERRITORY_SHORT_NAME AS SUPPLIER_COUNTRY,
+    --apsa.COUNTRY,
+    APIA.INVOICE_NUM,    
+    --apia.invoice_ID,
+    APIA.INVOICE_CURRENCY_CODE,
+    NVL(APIA.INVOICE_AMOUNT, 0) AS INVOICE_AMOUNT,
+    'OMR' AS BASE_CURRENCY,
+    NVL(APIA.BASE_AMOUNT, APIA.INVOICE_AMOUNT) AS BASE_AMOUNT,
+    TO_CHAR(APIA.INVOICE_DATE, 'DD-Mon-YYYY') AS INVOICE_DATE,
+    APIL.ACCOUNTING_DATE AS GL_DATE,
+    APIL.LINE_NUMBER AS INV_LINE_NUMBER,
+    APIL.AMOUNT AS LINE_AMOUNT,
+	NVL(APIL.BASE_AMOUNT, APIL.AMOUNT) AS LINE_BASE_AMOUNT,
+  	NVL(APID.BASE_AMOUNT, APID.AMOUNT) AS DISTRIBUTION_AMOUNT,
+    APIL.DESCRIPTION,
+    APIL.TAX_RATE_CODE,
+    APIL.TAX_RATE,
+    APIA.DOC_SEQUENCE_VALUE,
+    USR.USER_NAME,
+    APIA.SOURCE AS INV_SOURCE,
+    (SELECT BATCH_NAME FROM APPS.AP_BATCHES_ALL WHERE BATCH_ID = NVL(APIA.BATCH_ID, 1)) AS BATCH_NAME,
+    GCC.CONCATENATED_SEGMENTS AS GL_ACCOUNT
+FROM
+    APPS.AP_INVOICES_ALL APIA,
+    APPS.AP_INVOICE_LINES_ALL APIL,
+    APPS.AP_INVOICE_DISTRIBUTIONS_ALL APID,
+    APPS.AP_SUPPLIERS APS,
+    APPS.AP_SUPPLIER_SITES_ALL APSA,
+    APPS.FND_USER USR,
+    APPS.FND_TERRITORIES_VL TER,
+    APPS.GL_CODE_COMBINATIONS_KFV GCC
+WHERE
+    1 = 1
+    AND APIA.VENDOR_ID = APS.VENDOR_ID
+    AND APS.VENDOR_ID = APSA.VENDOR_ID
+    AND APS.VENDOR_ID = NVL(:P_VENDOR_NAME,APS.VENDOR_ID)
+    AND APIA.ORG_ID = APSA.ORG_ID
+    AND APIA.INVOICE_ID = APIL.INVOICE_ID
+    AND APIA.INVOICE_ID=APID.INVOICE_ID
+    AND APIL.LINE_NUMBER = APID.INVOICE_LINE_NUMBER
+    AND APIA.ORG_ID = APIL.ORG_ID
+    AND APIA.VENDOR_SITE_ID = APSA.VENDOR_SITE_ID
+    AND APIA.CREATED_BY = USR.USER_ID
+    AND APIA.CANCELLED_DATE IS NULL
+    AND APIA.ORG_ID = FND_PROFILE.VALUE('ORG_ID')
+    AND APIA.CREATED_BY = NVL(:P_USERID, APIA.CREATED_BY)
+    AND TRUNC(APIL.ACCOUNTING_DATE) BETWEEN LAST_DAY(ADD_MONTHS(TO_DATE(:P_PERIOD_FROM, 'Mon-YY'), -1)) + 1 AND LAST_DAY(TO_DATE(:P_PERIOD_TO, 'Mon-YY'))
+    AND APSA.COUNTRY = TER.TERRITORY_CODE
+--    and apia.invoice_num = '0000013396'
+    AND APID.DIST_CODE_COMBINATION_ID = GCC.CODE_COMBINATION_ID
+--    and apia.INVOICE_ID = 82300272   
+ORDER BY
+    APS.VENDOR_NAME,
+    APIA.INVOICE_NUM,
+    APIL.LINE_NUMBER
+]]>
+</sqlStatement>
+</dataQuery>
+  <dataStructure>
+    <group name="G_MAIN" source="Q_MAIN">
+		<element name="VENDOR_NAME"			datatype="VARCHAR2"		value="VENDOR_NAME"/>
+		<element name="VENDOR_NO"			datatype="VARCHAR2"		value="SEGMENT1"/>
+		<element name="VAT_REGISTRATION_NUM" datatype="VARCHAR2"	value="VAT_REGISTRATION_NUM"/>
+		<element name="SUPPLIER_SITE_CODE"	datatype="VARCHAR2"		value="SUPPLIER_SITE_CODE"/>
+		<element name="SUPPLIER_COUNTRY"	datatype="VARCHAR2"		value="SUPPLIER_COUNTRY"/>		
+		<element name="INVOICE_NUM"			datatype="VARCHAR2"		value="INVOICE_NUM"/>		
+		<element name="INVOICE_DATE"		datatype="DATE"			value="INVOICE_DATE"/>
+		<element name="CURR_CODE"			datatype="VARCHAR2"		value="INVOICE_CURRENCY_CODE"/>	
+        <element name="INVOICE_AMOUNT"		datatype="NUMBER"		value="INVOICE_AMOUNT"/>
+		<element name="BASE_CURRENCY"		datatype="VARCHAR2"		value="BASE_CURRENCY"/>
+        <element name="BASE_AMOUNT"			datatype="NUMBER"		value="BASE_AMOUNT"/>
+		<element name="INV_SOURCE"			datatype="VARCHAR2"		value="INV_SOURCE"/>
+		<element name="BATCH_NAME"		    datatype="VARCHAR2"		value="BATCH_NAME"/>
+		<element name="DESC"				datatype="VARCHAR2"		value="DESCRIPTION"/>
+		<element name="DOC_SEQ_VALUE"		datatype="VARCHAR2"		value="DOC_SEQUENCE_VALUE"/>
+		<element name="USERNAME"			datatype="VARCHAR2"		value="USER_NAME"/>			
+		<element name="GL_DATE"				datatype="VARCHAR2"		value="GL_DATE"/>
+		<element name="INV_LINE_NUMBER"		datatype="NUMBER"		value="INV_LINE_NUMBER"/>
+		<element name="LINE_AMOUNT"			datatype="NUMBER"		value="LINE_AMOUNT"/>
+		<element name="LINE_BASE_AMOUNT"	datatype="NUMBER"		value="LINE_BASE_AMOUNT"/>
+		<element name="DISTRIBUTION_AMOUNT"	datatype="NUMBER"		value="DISTRIBUTION_AMOUNT"/>
+		<element name="TAX_RATE_CODE"		datatype="VARCHAR2"		value="TAX_RATE_CODE"/>	
+		<element name="TAX_RATE"			datatype="VARCHAR2"		value="TAX_RATE"/>	
+		<element name="GL_ACCOUNT"			datatype="VARCHAR2"		value="GL_ACCOUNT"/>		
+    </group>
+  </dataStructure>
+</dataTemplate>
