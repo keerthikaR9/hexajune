@@ -1,0 +1,604 @@
+function total_dueFormula return Number is
+tot_amt     number;
+first_tot number := 0;
+second_tot number := 0;
+third_tot number := 0;
+tot number := 0;
+
+begin
+   
+
+:curr_text := 'These Amounts are Overdue (' || :currency_code1 || ') :'; 
+
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    first_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+     HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND     cust.account_number =nvl(:Cust_No,cust.account_number) --  between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number) commented by Petricia 2 june
+and     custv.PROFILE_CLASS_ID = nvl(:profile_class_id,custv.PROFILE_CLASS_ID) --   between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) -- between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class not in ('CM')
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code = nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date) ---->--->> commented by Manish on 10-Mar-13
+and        :p_statement_date - ps.due_date <= 0;  
+exception
+    when others then first_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into   second_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE,
+    ra_batch_sources_all RBSA,   
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND     cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class in ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+--and     ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+-- and       ps.due_date <= sysdate
+and      ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <= nvl(:p_statement_date, ps.trx_date)--->--->> commented by Manish on 10-Mar-13
+and      :p_statement_date - ps.due_date <= 0;  
+exception
+    when others then second_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    third_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE      ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID = nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class in ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       :p_statement_date - ps.due_date <= 0;
+exception
+    when others then third_tot := 0;
+end;
+
+:current_due := nvl(first_tot,0) + nvl(second_tot,0) + nvl(third_tot,0);
+
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    first_tot      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+     HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) -- between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class not in ('CM')
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date) ---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 1
+and     :p_statement_date - ps.due_date <= 30;
+exception
+    when others then first_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into   second_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class = 'CM'
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+--and     ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 1
+and     :p_statement_date - ps.due_date <= 30;
+exception
+    when others then second_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    third_tot       
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE      ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class = 'CM'
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and       ps.invoice_currency_code = nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 1
+and     :p_statement_date - ps.due_date <= 30;
+exception
+    when others then third_tot := 0;
+end;
+
+ :one_month_due   :=  nvl(first_tot,0) + nvl(second_tot,0) + nvl(third_tot,0);
+
+
+
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    first_tot      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+     HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class not in ('CM')
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date) ---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 31
+and     :p_statement_date - ps.due_date <= 60;
+exception
+    when others then first_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into   second_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt 
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number) -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID = nvl(:profile_class_id,custv.PROFILE_CLASS_ID) --between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class = 'CM'
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+--and     ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+-- and       ps.due_date <= sysdate
+and      ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 31
+and     :p_statement_date - ps.due_date <= 60;
+exception
+    when others then second_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    third_tot       
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE      ps.status = 'OP'
+AND     cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID = nvl(:profile_class_id,custv.PROFILE_CLASS_ID) --between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class = 'CM'
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID 
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)---->--->> commented by Manish on 10-Mar-13
+and     :p_statement_date - ps.due_date >= 31
+and     :p_statement_date - ps.due_date <= 60;
+exception
+    when others then third_tot := 0;
+end;
+
+ :two_month_due   :=  nvl(first_tot,0) + nvl(second_tot,0) + nvl(third_tot,0);
+
+
+
+
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    first_tot      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx,  
+    HZ_CUST_SITE_USES SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+     HZ_PARTIES PARTY,
+                hz_customer_profiles  custv,  --->> commented by Manish on 10-Mar-13 --removed on 01-apr-13 due to profile class id issue
+               RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class not in ('CM')
+-- and       ps.due_date <= sysdate
+and        ps.invoice_currency_code = nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID(+) = CUST.CUST_ACCOUNT_ID ---->--->> commented by Manish on 10-Mar-13
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and     :p_statement_date - ps.due_date > 60;
+exception
+    when others then first_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into   second_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE     ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No, cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class  in  ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and        ps.invoice_currency_code = nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID(+) = CUST.CUST_ACCOUNT_ID
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and     :p_statement_date - ps.due_date > 60;
+exception
+    when others then second_tot := 0;
+end;
+
+begin
+SELECT     nvl(sum(ps.amount_due_remaining),0)
+into    third_tot       
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE      ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class  in  ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.invoice_currency_code = nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID(+) = CUST.CUST_ACCOUNT_ID
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)
+and     :p_statement_date - ps.due_date > 60;
+exception
+    when others then third_tot := 0;
+end;
+
+ :three_month_due   :=nvl(first_tot,0) +nvl(second_tot,0) + nvl(third_tot,0);
+
+
+
+ begin
+SELECT      nvl(sum(ps.amount_due_remaining),0)
+into    first_tot      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   RA_CUST_TRX_TYPES_ALL rtt
+   
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class  not in ('CM')
+-- and       ps.due_date <= sysdate
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date)---->--->> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = :site_id;
+  
+     exception
+    when others then first_tot := 0;
+end;
+--and     :p_statement_date - ps.due_date > 60;
+
+begin
+SELECT      nvl(sum(ps.amount_due_remaining),0)
+into   second_tot  --:current_due      
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE    ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and    site.location =nvl(:location,site.location) -- between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class in ('CM')
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+--and     ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'
+AND     RBSA.NAME NOT IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+and   ((ra_customer_trx.INTERFACE_HEADER_ATTRIBUTE12 ='Approved'--------condition added by vinoth to validate based on mentioned cut-of date 
+            and ra_customer_trx.trx_date >= '08-Mar-2016') or (ra_customer_trx.trx_date < '08-Mar-2016'))
+-- and       ps.due_date <= sysdate
+and      ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date) ---->--->> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = :site_id;
+exception
+    when others then second_tot := 0;
+end;
+--and     :p_statement_date - ps.due_date > 60;
+
+begin
+SELECT      nvl(sum(ps.amount_due_remaining),0)
+into    third_tot       
+FROM    ar_payment_schedules_all ps,
+    ra_customer_trx_all ra_customer_trx, 
+    HZ_CUST_SITE_USES_ALL SITE, 
+    HZ_CUST_ACCOUNTS CUST,
+    HZ_PARTIES PARTY,
+  hz_customer_profiles  custv,
+   ra_batch_sources_all RBSA,
+    RA_CUST_TRX_TYPES_ALL rtt
+WHERE      ps.status = 'OP'
+AND      cust.account_number =nvl(:Cust_No,cust.account_number)  -- between nvl(:p_customer_low,cust.account_number) and nvl(:p_customer_high,cust.account_number)
+and     custv.PROFILE_CLASS_ID= nvl(:profile_class_id,custv.PROFILE_CLASS_ID) -- between nvl(:p_customer_profile_low,custv.PROFILE_CLASS_ID) and nvl(:p_customer_profile_high,custv.PROFILE_CLASS_ID)
+and     site.location =nvl(:location,site.location) --  between nvl(:p_customer_site_low,site.location) and nvl(:p_customer_site_high,site.location)
+AND     ps.customer_id = CUST.CUST_ACCOUNT_ID (+)
+AND     CUSt.PARTY_ID     = PARTY.PARTY_ID(+)
+AND     ps.customer_trx_id = ra_customer_trx.customer_trx_id (+)
+AND     ra_customer_trx.CUST_TRX_TYPE_ID=rtt.CUST_TRX_TYPE_ID(+)
+and     ra_customer_trx.batch_source_id = rbsa.batch_source_id(+)
+and     ra_customer_trx.ORG_id = rbsa.ORG_id(+)
+--AND     ra_customer_trx.bill_to_site_use_id = SITE.site_use_id(+)
+ AND     custv.site_use_id=SITE.site_use_id   ------>> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = SITE.site_use_id(+)
+AND     RBSA.NAME IN ('Adhoc Standard Import','Cargo - RAPID','PAX - RAPID','SPINOFF CARGO')
+AND     ps.org_id = nvl(:P_ORG_ID,ps.org_id)
+and     ps.class = 'CM'
+and     nvl(ra_customer_trx.complete_flag,'N') ='Y'
+and       ps.invoice_currency_code =nvl(:currency_code1, ps.invoice_currency_code)
+and ps.amount_due_remaining !=0 --Added on 10-Aug-2010 SR 17132 
+AND     custv.CUST_ACCOUNT_ID = CUST.CUST_ACCOUNT_ID
+and       ps.trx_date <=nvl( :p_statement_date, ps.trx_date) ---->--->> commented by Manish on 10-Mar-13
+AND     ps.CUSTOMER_SITE_USE_ID = :site_id;
+exception
+    when others then third_tot := 0;
+end;
+--and     :p_statement_date - ps.due_date > 60;
+
+tot_amt   := nvl(first_tot,0) + nvl(second_tot,0) + nvl(third_tot,0);
+tot := nvl(:current_due,0) + nvl(:three_month_due,0) + nvl(:two_month_due,0) +  nvl(:one_month_due,0);
+--srw.message(2000,tot);
+
+return (nvl(tot,0));
+
+exception
+    when others then return(0);
+end;
