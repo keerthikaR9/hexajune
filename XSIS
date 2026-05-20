@@ -1,0 +1,1783 @@
+create or replace PACKAGE BODY      XXSIS_ATTACHMENT_PKG is
+  /*****************************************************************************************
+  * $Header$c
+  * Program Name : xxsis_attachment_pkg.pkb
+  * Language     : PL/SQL
+  * Description  : Supporting Documents Extraction
+  * History      :
+  *
+  * Author            Version           Modified
+  * --------------   ---------------   ---------------
+  *  Annamalai G	  Version: 1.0     09-Jan-2020 (SR 255928)
+  *  Annamalai G	  Version: 1.1	   30-Apr-2020 (SR 263976)
+  *****************************************************************************************/
+  PROCEDURE tranfer_attachments_tran(errbuf              OUT VARCHAR2,
+                                     retcode             OUT NUMBER,
+                                     p_settlement_period VARCHAR2,
+                                     p_from_tran_id      VARCHAR2,
+                                     p_to_tran_id        VARCHAR2,
+                                     p_conc_tran_id      VARCHAR2,
+                                     p_reprocess         VARCHAR2) AS
+    CURSOR c_doc(p_inv_num VARCHAR2) IS
+      SELECT a.file_name, d.file_data, a.pk1_value, a.pk2_value, a.media_id
+        FROM fnd_attached_docs_form_vl a, fnd_lobs d, ra_customer_trx_all t
+       WHERE a.user_entity_name = 'RA_CUSTOMER_TRX'
+         AND a.function_name = 'ARXTWMAI'
+            --         AND a.function_type = 'F'
+         AND d.file_id = a.media_id
+         AND a.pk1_value = t.customer_trx_id
+         AND t.trx_number = p_inv_num
+      --       and a.pk2_value = p_inv_num
+       ORDER BY a.media_id;
+
+    CURSOR c_header(p_org_id number) IS
+	    SELECT ROWID,
+             sorgid,
+             settlementmonthperiod,
+             borgid,
+             'M' billing_type,
+             invoicenumber,
+             transmissionid,
+             invoiceheaderid
+        FROM xxsis_mbs_out_inv_header_t
+      --   where invoicenumber = 'CT20140944'; -- Need to delete
+      --Sekar 28-jun-15 begin
+       WHERE attribute29 = 'PROCESSED'
+         AND ((attribute10 is null and p_reprocess = 'N') OR
+             (p_reprocess = 'Y' and attribute10 is not null))
+	         AND (settlementmonthperiod, transmissionid) IN
+             (SELECT a.settlementmonthperiod, a.transmissionid
+                FROM xxsis_mbs_out_inv_header_t a
+               WHERE (a.settlementmonthperiod =
+                     NVL(p_settlement_period, a.settlementmonthperiod) AND
+                     (p_from_tran_id IS NOT NULL OR
+                     p_to_tran_id IS NOT NULL OR
+                     p_conc_tran_id IS NOT NULL))
+                 AND ((p_from_tran_id IS NULL AND p_to_tran_id IS NULL AND
+                     p_conc_tran_id IS NULL) OR
+                     ((TO_NUMBER(a.transmissionid) >= p_from_tran_id AND
+                     TO_NUMBER(a.transmissionid) <= p_to_tran_id) OR
+                     a.transmissionid IN
+                     (SELECT *
+                          FROM TABLE (SELECT CAST(in_list(p_conc_tran_id) AS
+                                                  my_table)
+                                        FROM DUAL))))
+				 AND a.attribute25=p_org_id			-- Added for SR 259267
+                 AND EXISTS
+               (SELECT 1
+                        FROM fnd_attached_docs_form_vl c,
+                             fnd_lobs                  d,
+                             ra_customer_trx_all       t
+                       WHERE c.user_entity_name = 'RA_CUSTOMER_TRX'
+                         AND c.function_name = 'ARXTWMAI'
+                            --AND c.function_type = 'F'
+                         AND d.file_id = c.media_id
+                         AND c.pk1_value = t.customer_trx_id
+                         AND t.trx_number = a.invoicenumber
+						 --AND t.org_id=p_org_id -- Added for SR 259267
+                      UNION ALL
+                      SELECT COUNT(1)
+                        FROM ips_invoice_header             d,
+                             ips_invoice_lines              b,
+                             ips_import_validation_log_line c
+                       WHERE d.invoice_num = a.invoicenumber
+                         AND b.invoice_num = d.invoice_num
+                         AND b.source_feeder = d.hdr_source_feeder
+                            --and b.LINE_INTERFACE_STATUS = 'V'
+                         AND b.batch_name = c.batch_code
+                            --and c.IMPORT_STATUS = 'V'
+                         AND b.org_id = d.hdr_org_id
+                         AND b.post_flag = 0));
+
+    cursor c_req(p_folder_name varchar2) is
+      select distinct request_id
+        from XXSIS_OUT_ATTACHMENTS
+       where folder_name = p_folder_name
+       order by request_id;
+
+    ar_exp EXCEPTION;
+    --    v_server_path varchar2(100) := '/u01/kqerpprod/applprod/prodappl/KQU/11.5.0/XXKQMBS/ATTACHMENT/';
+    -- v_server_path   VARCHAR2(100) := fnd_profile.VALUE('XXSISMBSOUTBOUNDATTACHMENTURL');
+    v_server_path    VARCHAR2(200);
+    v_file_name      VARCHAR2(200);
+    v_zip_file_name  VARCHAR2(200);
+    v_seq            VARCHAR2(10);
+    v_media_id       NUMBER;
+    v_foldername     varchar2(100);
+    ln_conc_req_id   NUMBER;
+    v_request_status BOOLEAN;
+    v_phase          VARCHAR2(2000);
+    v_wait_status    VARCHAR2(2000);
+    v_dev_phase      VARCHAR2(2000);
+    v_dev_status     VARCHAR2(2000);
+    v_message        VARCHAR2(2000);
+    v_url            varchar2(100);
+	v_org_id		 NUMBER; --Added for LE SPINOFF
+  BEGIN
+    /*
+     v_file_name := v_server_path||'Sek';
+     fnd_file.put_line(fnd_file.LOG,'File Name : '||v_file_name);
+    v_cmd := '/bin/mkdir ' || v_file_name;
+      fnd_file.put_line(fnd_file.LOG,'Command : '||v_cmd);
+       host_command1(p_command => v_cmd);
+       */
+	   /* Start:: Added for SR 259267 */
+	v_org_id :=fnd_profile.value('ORG_ID');
+	v_server_path := get_att_path(v_org_id);
+	   fnd_file.put_line(fnd_file.LOG,'Org ID : ' || v_org_id);
+	   fnd_file.put_line(fnd_file.LOG,'Server Path : ' || v_server_path);
+
+	   /* END:: Added for SR 259267 */
+    BEGIN
+      SELECT LPAD(NVL(MAX(attribute11), 0) + 1, 5, '0')
+        INTO v_seq
+        FROM xxsis_mbs_out_inv_header_t
+       WHERE attribute10 = 'Processed ' || TRUNC(SYSDATE)
+	   AND attribute25=v_org_id -- Added for SR 259267
+	   ;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_seq := '00001';
+    END;
+
+    FOR r_header IN c_header(v_org_id) -- Modified for the SR 259267
+	LOOP
+	--FOR r_header IN c_header LOOP
+      v_foldername    := '/MSDF-' || LPAD(r_header.sorgid, 3, '0') || 'F' ||
+                         TO_CHAR(SYSDATE, 'YYYYMMDD') || v_seq;
+      v_zip_file_name := v_server_path || v_foldername;
+
+      host_command1(p_command => '/bin/mkdir ' || v_zip_file_name);
+      v_file_name := v_zip_file_name;
+
+      --Seller Airline Code
+      IF r_header.sorgid IS NOT NULL THEN
+        v_file_name := v_file_name || '/' || r_header.sorgid;
+        host_command1(p_command => '/bin/mkdir ' || v_file_name);
+      END IF;
+
+      --Settlement Period
+      IF r_header.settlementmonthperiod IS NOT NULL THEN
+        v_file_name := v_file_name || '/20' ||
+                       SUBSTR(r_header.settlementmonthperiod, 1, 4);
+        host_command1(p_command => '/bin/mkdir ' || v_file_name);
+        v_file_name := v_file_name || '/' ||
+                       SUBSTR(r_header.settlementmonthperiod, 5);
+        host_command1(p_command => '/bin/mkdir ' || v_file_name);
+      END IF;
+
+      --Receiver Airline Code
+      IF r_header.borgid IS NOT NULL THEN
+        v_file_name := v_file_name || '/' || r_header.borgid;
+        host_command1(p_command => '/bin/mkdir ' || v_file_name);
+      END IF;
+
+      --Billing Type
+      v_file_name := v_file_name || '/M';
+      host_command1(p_command => '/bin/mkdir ' || v_file_name);
+
+      --Invoice Number
+      IF r_header.invoicenumber IS NOT NULL THEN
+        v_file_name := v_file_name || '/' || r_header.invoicenumber;
+        host_command1(p_command => '/bin/mkdir ' || v_file_name);
+      END IF;
+
+      --Move the files
+      FOR r_doc IN c_doc(r_header.invoicenumber) LOOP
+        exportblob(v_file_name || '/' || REPLACE(r_doc.file_name, ' ', ''),
+                   r_doc.file_data);
+        v_media_id := r_doc.media_id;
+      END LOOP;
+       fnd_file.put_line(fnd_file.LOG,'Transsys-r Calling Procedure P_INV_OUT');
+       fnd_file.put_line(fnd_file.LOG,'Transsys-r_header.invoicenumber--'||r_header.invoicenumber);
+      p_inv_out(r_header.invoicenumber,
+                v_file_name,
+                r_header.invoiceheaderid,
+                r_header.transmissionid,
+                substr(v_foldername, 2));
+      --Calling concurrent program
+     fnd_file.put_line(fnd_file.LOG,'came out of P_INV_OUT *** Execution Completed');
+     fnd_file.put_line(fnd_file.LOG,'v_seq *** = '||v_seq);
+     fnd_file.put_line(fnd_file.LOG,'r_header.invoiceheaderid *** = '||r_header.invoiceheaderid);
+     fnd_file.put_line(fnd_file.LOG,'r_header.transmissionid  *** = '||r_header.transmissionid);
+      UPDATE xxsis_mbs_out_inv_header_t a
+         SET a.attribute10 = 'Processed ' || SYSDATE, a.attribute11 = v_seq
+      --   a.attribute9  = v_media_id
+       WHERE a.invoiceheaderid = r_header.invoiceheaderid
+         AND a.transmissionid = r_header.transmissionid;
+         fnd_file.put_line(fnd_file.LOG,'After Update ***');
+    END LOOP;
+
+  fnd_file.put_line(fnd_file.LOG,'After COMMIT and End loop ***');
+    COMMIT;
+    fnd_file.put_line(fnd_file.LOG,'After COMMIT ***');
+    --Call SFTP
+    fnd_file.put_line(fnd_file.LOG,'Call SFTP -- v_foldername = ***  '||v_foldername);
+    if v_foldername is not null then
+      -- To Wait for Concurrent Requests ...
+      fnd_file.put_line(fnd_file.LOG,'for r_req in c_req ***');
+      for r_req in c_req(substr(v_foldername, 2)) loop
+      fnd_file.put_line(fnd_file.LOG,'INSIDE LOOP r_req in c_req *** request_id = '||r_req.request_id);
+        v_request_status := fnd_concurrent.wait_for_request(request_id => r_req.request_id,
+                                                            INTERVAL   => 10,
+                                                            max_wait   => 0,
+                                                            phase      => v_phase,
+                                                            status     => v_wait_status,
+                                                            dev_phase  => v_dev_phase,
+                                                            dev_status => v_dev_status,
+                                                            MESSAGE    => v_message);
+        v_dev_phase      := NULL;
+        v_dev_status     := NULL;
+      end loop;
+    /* Start:: Added/Modified for SR 259267 */
+	IF v_org_id = 6858
+    THEN
+        BEGIN
+            SELECT directory_path
+              INTO v_url
+              FROM all_directories
+             WHERE directory_name = 'DIR_SIS_SFTP_OGH';
+
+            fnd_file.put_line (fnd_file.LOG, 'v_url = ' || v_url);
+            fnd_file.put_line (
+                fnd_file.LOG,
+                'substr(v_foldername, 2) = ' || SUBSTR (v_foldername, 2));
+        EXCEPTION
+            WHEN OTHERS
+            THEN
+                fnd_file.put_line (fnd_file.LOG,
+                                   'Exp in getting SFTP path : ' || SQLERRM);
+        END;
+    ELSIF v_org_id = 84
+    THEN
+        BEGIN
+            SELECT directory_path
+              INTO v_url
+              FROM all_directories
+             WHERE directory_name = 'DIR_SIS_STFP';
+
+            fnd_file.put_line (fnd_file.LOG, 'v_url = ' || v_url);
+            fnd_file.put_line (
+                fnd_file.LOG,
+                'substr(v_foldername, 2) = ' || SUBSTR (v_foldername, 2));
+        EXCEPTION
+            WHEN OTHERS
+            THEN
+                fnd_file.put_line (fnd_file.LOG,
+                                   'Exp in getting SFTP path : ' || SQLERRM);
+        END;
+    ELSIF v_org_id = 3878
+    THEN
+        BEGIN
+            SELECT directory_path
+              INTO v_url
+              FROM all_directories
+             WHERE directory_name = 'DIR_SIS_SFTP_CGH';
+
+            fnd_file.put_line (fnd_file.LOG, 'v_url = ' || v_url);
+            fnd_file.put_line (
+                fnd_file.LOG,
+                'substr(v_foldername, 2) = ' || SUBSTR (v_foldername, 2));
+        EXCEPTION
+            WHEN OTHERS
+            THEN
+                fnd_file.put_line (fnd_file.LOG,
+                                   'Exp in getting SFTP path : ' || SQLERRM);
+        END;
+    ELSIF v_org_id = 6558 -- Added for SR 263976 (Catering SIS)
+    THEN
+        BEGIN
+            SELECT directory_path
+              INTO v_url
+              FROM all_directories
+             WHERE directory_name = 'DIR_SIS_SFTP_CTS';
+
+            fnd_file.put_line (fnd_file.LOG, 'v_url = ' || v_url);
+            fnd_file.put_line (
+                fnd_file.LOG,
+                'substr(v_foldername, 2) = ' || SUBSTR (v_foldername, 2));
+        EXCEPTION
+            WHEN OTHERS
+            THEN
+                fnd_file.put_line (fnd_file.LOG,
+                                   'Exp in getting SFTP path : ' || SQLERRM);
+        END;
+    END IF;
+	  /* End:: Added/Modified for SR 259267 */
+      BEGIN
+      fnd_file.put_line(fnd_file.LOG,'submit_request -- XXSIS_ATTACH_SFTP');
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSIS_ATTACH_SFTP',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE, -- subsequent                                                ,
+                                                     v_url, -- url
+                                                     substr(v_foldername, 2) -- file name
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+
+      COMMIT;
+    fnd_file.put_line(fnd_file.LOG,'ln_conc_req_id -- '||ln_conc_req_id);
+      IF ln_conc_req_id IS NOT NULL THEN
+        /*Calling fnd_concurrent.wait_for_request to wait for the program to complete */
+        v_request_status := fnd_concurrent.wait_for_request(request_id => ln_conc_req_id,
+                                                            INTERVAL   => 10,
+                                                            max_wait   => 0,
+                                                            phase      => v_phase,
+                                                            status     => v_wait_status,
+                                                            dev_phase  => v_dev_phase,
+                                                            dev_status => v_dev_status,
+                                                            MESSAGE    => v_message);
+        v_dev_phase      := NULL;
+        v_dev_status     := NULL;
+      END IF;
+    end if;
+    --End SFTP
+  EXCEPTION
+    WHEN ar_exp THEN
+      fnd_file.put_line(fnd_file.LOG,
+                        'Processed Terminated with errors. ...');
+      ROLLBACK;
+      retcode := 2;
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.LOG,
+                        'Processed Terminated with errors. ...');
+      errbuf  := 'Extraction Failed. ';
+      retcode := 2;
+      ROLLBACK;
+      fnd_file.put_line(fnd_file.LOG,
+                        ' Exception : ' || SQLCODE || ' - ' || SQLERRM);
+  END tranfer_attachments_tran;
+
+  PROCEDURE p_inv_out(p_inv_num    VARCHAR2,
+                      p_filepath   VARCHAR2,
+                      p_invid      number,
+                      p_transid    number,
+                      v_foldername varchar2) AS
+    CURSOR c_acdn IS
+      SELECT DISTINCT c.flight_no, c.cat_date, h.user_acdn_no doc_no
+        FROM acdn_details             b,
+             service_transactions     s,
+             catering_schedule_header c,
+             acdn_headers             h
+       WHERE b.service_trans_no = s.service_trans_no
+         AND s.cat_sch_id = c.cat_sch_id
+         AND b.acdn_no = h.acdn_no
+         AND h.user_acdn_no IN
+             (SELECT DISTINCT document_num
+                FROM ips_invoice_lines
+               WHERE invoice_num = p_inv_num);
+
+    CURSOR c_acsr(p_flight_no VARCHAR2, p_cat_date DATE) IS
+      SELECT service_trans_no, multi_ser_no
+        FROM service_transactions a, catering_schedule_header b
+       WHERE a.cat_sch_id = b.cat_sch_id
+         AND b.flight_no = p_flight_no
+         AND b.cat_date = p_cat_date
+         AND a.service_id = 1;
+
+    CURSOR c_ccd(p_flight_no VARCHAR2, p_cat_date DATE) IS
+      SELECT service_trans_no, multi_ser_no
+        FROM service_transactions a, catering_schedule_header b
+       WHERE a.cat_sch_id = b.cat_sch_id
+         AND b.flight_no = p_flight_no
+         AND b.cat_date = p_cat_date
+         AND a.service_id = 7;
+
+    CURSOR c_misc(p_flight_no VARCHAR2, p_cat_date DATE) IS
+      SELECT service_trans_no, multi_ser_no
+        FROM service_transactions a, catering_schedule_header b
+       WHERE a.cat_sch_id = b.cat_sch_id
+         AND b.flight_no = p_flight_no
+         AND b.cat_date = p_cat_date
+         AND a.service_id = 10;
+
+    CURSOR c_std(p_flight_no VARCHAR2, p_cat_date DATE, p_acdn_no NUMBER) IS
+      SELECT DISTINCT u.std_prod_id
+        FROM acdn_details             b,
+             service_transactions     s,
+             catering_schedule_header c,
+             acdn_headers             h,
+             std_uplift_prod_hdr      u
+       WHERE b.service_trans_no = s.service_trans_no
+         AND s.cat_sch_id = c.cat_sch_id
+         AND b.acdn_no = h.acdn_no
+         AND u.service_trans_no = s.service_trans_no
+         AND c.flight_no = p_flight_no
+         AND c.cat_date = p_cat_date
+         AND h.user_acdn_no = p_acdn_no;
+
+    CURSOR c_adhoc(p_flight_no VARCHAR2, p_cat_date DATE) IS
+      SELECT DISTINCT associate_service
+        FROM adhoc_trans_hdr          a,
+             service_transactions     b,
+             catering_schedule_header c
+       WHERE a.service_trans_no = b.service_trans_no
+         AND b.cat_sch_id = c.cat_sch_id
+         AND c.flight_no = p_flight_no
+         AND c.cat_date = p_cat_date
+         AND b.service_id = 4;
+
+    /*  cursor c_cancel(p_FLIGHT_NO varchar2, p_CAT_DATE date) is
+    select distinct a.SERVICE_TRANS_NO
+      from meal_prod_headers        a,
+           service_transactions     b,
+           CATERING_SCHEDULE_HEADER c
+     where a.SERVICE_TRANS_NO = b.SERVICE_TRANS_NO
+       and service_id = 9
+       and b.CAT_SCH_ID = c.CAT_SCH_ID
+       and c.FLIGHT_NO = p_FLIGHT_NO
+       AND c.CAT_DATE = p_CAT_DATE;*/
+    ln_cnt           NUMBER;
+    ln_org_id        NUMBER;
+    ln_org_id_chs    NUMBER;
+    ln_conc_req_id   NUMBER;
+    v_request_status BOOLEAN;
+    v_phase          VARCHAR2(2000);
+    v_wait_status    VARCHAR2(2000);
+    v_dev_phase      VARCHAR2(2000);
+    v_dev_status     VARCHAR2(2000);
+    v_message        VARCHAR2(2000);
+    v_output_file    VARCHAR2(300);
+    v_num            VARCHAR2(50);
+  BEGIN
+    --  ln_resp_id := fnd_global.resp_id;
+    --  ln_appl_id := fnd_global.resp_appl_id;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r Inside Procedure P_INV_OUT');
+    --ln_org_id := fnd_global.org_id;
+
+	ln_org_id := fnd_profile.value('ORG_ID'); -- Added for SR 259267
+
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r ln_org_id = '||ln_org_id);
+    --   fnd_global.apps_initialize(fnd_global.user_id, ln_resp_id, ln_appl_id);
+
+    -- Invoice Engineering Begin
+--    SELECT COUNT(1)
+      BEGIN
+      SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+--      INTO ln_cnt
+      FROM ips_invoice_header             a,
+           ips_invoice_lines              b,
+           ips_import_validation_log_line c
+     WHERE a.hdr_source_feeder = 'LMS'
+       AND 1=1--a.hdr_org_id = ln_org_id
+       AND a.invoice_num = p_inv_num
+       AND b.invoice_num = a.invoice_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.line_interface_status = 'V'
+       AND b.batch_name = c.batch_code
+       AND c.import_status = 'V'
+       AND b.org_id = a.hdr_org_id
+       AND b.post_flag = 0
+       group by a.hdr_org_id;
+   fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSILMS Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSILMS',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'LMS', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N', -- Reprint Flag (Y/N)
+                                                     'Y' -- Detailed Report (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+      fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSILMS Request ID = '||ln_conc_req_id);
+
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_eng_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+    END IF;
+    --END;
+  EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSILMS-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSILMS- '||SQLERRM);
+    END;
+    -- Invoice Engineering End
+  IF ln_org_id=6858 then -- Added for SR 259267
+    -- Invoice CIP Begin
+
+--    SELECT COUNT(1)
+    BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+--      INTO ln_cnt
+      FROM ips_invoice_header a, ips_invoice_lines b, fnd_lookup_values flv
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'CIP'
+       AND flv.lookup_type = 'IPS_SERVICE_TYPES'
+       AND flv.LANGUAGE = 'US'
+       AND flv.lookup_code = b.line_serv_code
+       AND a.invoice_num = p_inv_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.org_id = a.hdr_org_id
+       AND b.invoice_num = a.invoice_num
+       AND b.post_flag = 0
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSICIP Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSICIP',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'CIP', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N' -- Reprint Flag (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSICIP Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_CIP_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSICIP-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSICIP-'||SQLERRM);
+    END;
+
+    --Incoice CIP End
+	END IF;
+    /*
+      -- Invoice - Engg Handling & Tamween Begin (FHS)
+      select count(1)
+        into ln_cnt
+        from ips_invoice_header             a,
+             ips_invoice_lines              b,
+             IPS_IMPORT_VALIDATION_LOG_LINE c
+       where a.hdr_org_id = ln_org_id
+         and a.hdr_source_feeder = 'FHS'
+         and a.invoice_num = p_inv_num
+         and b.invoice_num = a.invoice_num
+         and b.source_feeder = a.hdr_source_feeder
+         and b.LINE_INTERFACE_STATUS = 'V'
+         and b.BATCH_NAME = c.BATCH_CODE
+         and c.IMPORT_STATUS = 'V'
+         and b.org_id = a.hdr_org_id
+         and b.post_flag = 0;
+      if ln_cnt > 0 then
+        begin
+          ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                       'XXSISIPSITET',
+                                                       '',
+                                                       '', -- start_time
+                                                       FALSE, -- subsequent                                                ,
+                                                       ln_org_id, -- Org Id
+                                                       'FHS', -- Source Feeder
+                                                       p_inv_num, -- From Invoice Number
+                                                       p_inv_num, -- To Invoce Number
+                                                       null, -- From Invoice Date
+                                                       null, -- To Invoice Date
+                                                       null, -- From Customer
+                                                       null, -- To Customer
+                                                       'N', -- Reprint Flag (Y/N)
+                                                       'Y' -- Detailed Report (Y/N)
+                                                       );
+
+        EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line(fnd_file.LOG,
+                              'After Request Submision Error =' || SQLERRM);
+        END;
+        COMMIT;
+
+        IF ln_conc_req_id IS NOT NULL THEN
+
+          / *Calling fnd_concurrent.wait_for_request to wait for the program to complete * /
+
+          v_request_status := fnd_concurrent.wait_for_request(request_id => ln_conc_req_id,
+                                                              INTERVAL   => 10,
+                                                              max_wait   => 0,
+                                                              phase      => v_phase,
+                                                              status     => v_wait_status,
+                                                              dev_phase  => v_dev_phase,
+                                                              dev_status => v_dev_status,
+                                                              MESSAGE    => v_message);
+
+          v_dev_phase  := NULL;
+          v_dev_status := NULL;
+
+        END IF;
+        -- To copy Concurrent Out into path
+        begin
+          select outfile_name
+            into v_output_file
+            from fnd_concurrent_requests
+           where request_id = ln_conc_req_id;
+        exception
+          when others then
+            v_output_file := null;
+        end;
+        if v_output_file is not null then
+          host_command1(p_command => '/bin/cp ' || v_output_file || ' ' ||
+                                     p_filepath || '/Eng_FHS_' || p_inv_num ||
+                                     '.txt');
+        end if;
+      END IF;
+      -- Invoice - Engg Handling & Tamween End (FHS)
+
+      -- Invoice - Engg Handling & Tamween Begin (LMS)
+      select count(1)
+        into ln_cnt
+        from ips_invoice_header             a,
+             ips_invoice_lines              b,
+             IPS_IMPORT_VALIDATION_LOG_LINE c
+       where a.hdr_org_id = ln_org_id
+         and a.hdr_source_feeder = 'LMS'
+         and a.invoice_num = p_inv_num
+         and b.invoice_num = a.invoice_num
+         and b.source_feeder = a.hdr_source_feeder
+         and b.LINE_INTERFACE_STATUS = 'V'
+         and b.BATCH_NAME = c.BATCH_CODE
+         and c.IMPORT_STATUS = 'V'
+         and b.org_id = a.hdr_org_id
+         and b.post_flag = 0;
+      if ln_cnt > 0 then
+        begin
+          ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                       'XXSISIPSITET',
+                                                       '',
+                                                       '', -- start_time
+                                                       FALSE, -- subsequent                                                ,
+                                                       ln_org_id, -- Org Id
+                                                       'LMS', -- Source Feeder
+                                                       p_inv_num, -- From Invoice Number
+                                                       p_inv_num, -- To Invoce Number
+                                                       null, -- From Invoice Date
+                                                       null, -- To Invoice Date
+                                                       null, -- From Customer
+                                                       null, -- To Customer
+                                                       'N', -- Reprint Flag (Y/N)
+                                                       'Y' -- Detailed Report (Y/N)
+                                                       );
+
+        EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line(fnd_file.LOG,
+                              'After Request Submision Error =' || SQLERRM);
+        END;
+        COMMIT;
+
+        IF ln_conc_req_id IS NOT NULL THEN
+
+          /*Calling fnd_concurrent.wait_for_request to wait for the program to complete * /
+
+          v_request_status := fnd_concurrent.wait_for_request(request_id => ln_conc_req_id,
+                                                              INTERVAL   => 10,
+                                                              max_wait   => 0,
+                                                              phase      => v_phase,
+                                                              status     => v_wait_status,
+                                                              dev_phase  => v_dev_phase,
+                                                              dev_status => v_dev_status,
+                                                              MESSAGE    => v_message);
+
+          v_dev_phase  := NULL;
+          v_dev_status := NULL;
+
+        END IF;
+        -- To copy Concurrent Out into path
+        begin
+          select outfile_name
+            into v_output_file
+            from fnd_concurrent_requests
+           where request_id = ln_conc_req_id;
+        exception
+          when others then
+            v_output_file := null;
+        end;
+        if v_output_file is not null then
+          host_command1(p_command => '/bin/cp ' || v_output_file || ' ' ||
+                                     p_filepath || '/Eng_LMS_' || p_inv_num ||
+                                     '.txt');
+        end if;
+      END IF;
+      -- Invoice - Engg Handling & Tamween End (LMS)
+    */
+    -- Invoice - Engg Handling & Tamween Begin (TWN)
+    BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+--    SELECT COUNT(1)
+--      INTO ln_cnt
+      FROM ips_invoice_header             a,
+           ips_invoice_lines              b,
+           ips_import_validation_log_line c
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'TWN'
+       AND a.invoice_num = p_inv_num
+       AND b.invoice_num = a.invoice_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.line_interface_status = 'V'
+       AND b.batch_name = c.batch_code
+       AND c.import_status = 'V'
+       AND b.org_id = a.hdr_org_id
+       AND b.post_flag = 0
+       group by a.hdr_org_id;
+       fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSITET Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSITET',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'TWN', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N', -- Reprint Flag (Y/N)
+                                                     'N' -- Detailed Report (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSITET Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/inv_Eng_TWN_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSITET-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSITET-'||SQLERRM);
+    END;
+
+    -- Invoice - Engg Handling & Tamween End (TWN)
+
+    -- Invoice - Interkitchen & Laundry (IKT)
+
+--    SELECT COUNT(1)
+--      INTO ln_cnt
+    BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+      FROM ips_invoice_header             a,
+           ips_invoice_lines              b,
+           ips_import_validation_log_line c
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'IKT'
+       AND a.invoice_num = p_inv_num
+       AND b.invoice_num = a.invoice_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.line_interface_status = 'V'
+       AND b.batch_name = c.batch_code
+       AND c.import_status = 'V'
+       AND b.org_id = a.hdr_org_id
+       AND b.post_flag = 0
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSLND Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSLND',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'IKT', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N', -- Reprint Flag (Y/N)
+                                                     'Y' -- Detailed Report (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSLND Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_IntKit_IKT_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSLND-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSLND-'||SQLERRM);
+    END;
+
+    -- Invoice - Interkitchen & Laundry (IKT)
+
+    -- Invoice - Interkitchen & Laundry (LND)
+
+--    SELECT COUNT(1)
+--      INTO ln_cnt
+     BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+      FROM ips_invoice_header             a,
+           ips_invoice_lines              b,
+           ips_import_validation_log_line c
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'LND'
+       AND a.invoice_num = p_inv_num
+       AND b.invoice_num = a.invoice_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.line_interface_status = 'V'
+       AND b.batch_name = c.batch_code
+       AND c.import_status = 'V'
+       AND b.org_id = a.hdr_org_id
+       AND b.post_flag = 0
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSLND Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSLND',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'LND', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N', -- Reprint Flag (Y/N)
+                                                     'Y' -- Detailed Report (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSLND Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_IntKit_LND_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSLND-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSLND-'||SQLERRM);
+    END;
+
+    -- Invoice - Interkitchen & Laundry (LND)
+
+    -- Invoice - Traffic Handling (FHS)
+--    SELECT COUNT(1)
+--      INTO ln_cnt
+
+IF ln_org_id=6858 then
+
+     BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+      FROM ips_invoice_header             a,
+           ips_invoice_lines              b,
+           ips_import_validation_log_line c
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'FHS'
+       AND a.invoice_num = p_inv_num
+       AND b.invoice_num = a.invoice_num
+       AND b.source_feeder = a.hdr_source_feeder
+       AND b.line_interface_status = 'V'
+       AND b.batch_name = c.batch_code
+       AND c.import_status = 'V'
+       AND b.org_id = a.hdr_org_id
+       AND b.post_flag = 0
+       AND a.hdr_apps_customer_code NOT IN ('3334', '2934', '2663')
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSIGH Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSIGH',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs,--ln_org_id, -- Org Id
+                                                     'FHS', -- Source Feeder
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N', -- Reprint Flag (Y/N)
+                                                     'Y' -- Detailed Report (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSIGH Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_TRF_HND_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSIGH-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSIGH-'||SQLERRM);
+    END;
+
+    -- Invoice - Traffic Handling (FHS)
+   END IF;
+    -- Invoice - Import Cargo, Export Cargo (CHS)
+
+    BEGIN
+    SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+      FROM ips_invoice_header         a,
+           ips_doc_header_all_archive b,
+           ips_doc_lines_all_archive  c
+     WHERE 1=1
+      --AND a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'CHS'
+       AND a.hdr_document_category = 'FEEDER_IN_IMP_CGS'
+       AND a.invoice_num = p_inv_num
+       AND c.invoice_number = a.invoice_num
+       AND c.source_feeder = b.hdr_source_feeder
+       AND c.batch_name = b.hdr_batch_name
+       AND c.document_num = b.hdr_document_num
+       AND c.line_recharge_ref = b.process_code
+       AND c.post_flag = 0
+       AND c.line_interface_status = 'V'
+       AND b.hdr_interface_status = 'V'
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSINIE Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSINIE',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs, -- Org Id
+                                                     'CHS', -- Source Feeder
+                                                     'FEEDER_IN_IMP_CGS', --Transaction Type
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N' -- Reprint Flag (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSINIE Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_IMP_CGS_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSINIE(FEEDER_IN_IMP_CGS)-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSINIE(FEEDER_IN_IMP_CGS)-'||SQLERRM);
+    END;
+
+    -- Invoice - Import Cargo, Export Cargo (CHS)
+
+    -- Invoice - Import Cargo, Export Cargo (Exp CHS)
+    BEGIN
+     SELECT COUNT(1),a.hdr_org_id
+      INTO ln_cnt,ln_org_id_chs
+      FROM ips_invoice_header         a,
+           ips_doc_header_all_archive b,
+           ips_doc_lines_all_archive  c
+     WHERE 1=1--a.hdr_org_id = ln_org_id
+       AND a.hdr_source_feeder = 'CHS'
+       AND a.hdr_document_category = 'FEEDER_IN_EXP_CGS'
+       AND a.invoice_num = p_inv_num
+       AND c.invoice_number = a.invoice_num
+       AND c.source_feeder = b.hdr_source_feeder
+       AND c.batch_name = b.hdr_batch_name
+       AND c.document_num = b.hdr_document_num
+       AND c.line_recharge_ref = b.process_code
+       AND c.post_flag = 0
+       AND c.line_interface_status = 'V'
+       AND b.hdr_interface_status = 'V'
+       group by a.hdr_org_id;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSINIE Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSISIPSINIE',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     ln_org_id_chs, -- Org Id
+                                                     'CHS', -- Source Feeder
+                                                     'FEEDER_IN_EXP_CGS', --Transaction Type
+                                                     p_inv_num, -- From Invoice Number
+                                                     p_inv_num, -- To Invoce Number
+                                                     NULL, -- From Invoice Date
+                                                     NULL, -- To Invoice Date
+                                                     NULL, -- From Customer
+                                                     NULL, -- To Customer
+                                                     'N' -- Reprint Flag (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSISIPSINIE Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_EXP_CGS_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSINIE(FEEDER_IN_EXP_CGS)-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSISIPSINIE(FEEDER_IN_EXP_CGS)-'||SQLERRM);
+    END;
+
+    -- Invoice - Import Cargo, Export Cargo (Exp CHS)
+
+    -- ADHOC Invoices
+    BEGIN
+    SELECT COUNT(1)
+      INTO ln_cnt
+      FROM hz_cust_accounts      cust,
+           hz_parties            party,
+           ra_customer_trx_all   ctx,
+           ra_cust_trx_types_all ctt,
+           fnd_territories_vl    ft,
+           ra_batch_sources_all  bs,
+           fnd_flex_value_sets   a1,
+           fnd_flex_values       b1,
+           fnd_flex_value_sets   a2,
+           fnd_flex_values       b2
+     WHERE cust.cust_account_id = ctx.bill_to_customer_id
+       AND cust.party_id = party.party_id
+       AND ctx.cust_trx_type_id = ctt.cust_trx_type_id
+       AND party.country = ft.territory_code(+)
+       AND ctx.batch_source_id = bs.batch_source_id
+       AND UPPER(ctx.attribute_category) <> 'NONE'
+       AND bs.NAME = b1.flex_value
+       AND a1.flex_value_set_id = b1.flex_value_set_id
+       AND a1.flex_value_set_name = 'XXSIS_MBS_TRANSACTION_SOURCE'
+       AND ctt.NAME = b2.flex_value
+       AND a2.flex_value_set_id = b2.flex_value_set_id
+       AND a2.flex_value_set_name = 'XXSIS_MBS_AR_TRANSACTIONTYPE'
+       AND ctx.trx_number = p_inv_num;
+  fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSIS_ADHOC_INV Count = '||ln_cnt||' For Invoice Number -- '||p_inv_num);
+    IF ln_cnt > 0 THEN
+      BEGIN
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSIS_ADHOC_INV',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     'Transaction Number', -- Order by
+                                                     NULL, -- Customer Name Low
+                                                     NULL, --Customer Name High
+                                                     NULL, -- Batch Low
+                                                     NULL, -- Batch High
+                                                     NULL, -- Transaction Class
+                                                     NULL, -- Transaction Type Low
+                                                     NULL, -- Transaction Type High
+                                                     p_inv_num, -- Transaction Number Low
+                                                     p_inv_num, -- Transaction Number High
+                                                     NULL, --Transaction Date Low
+                                                     NULL, --Transaction Date High
+                                                     'N' -- Reprint Flag (Y/N)
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSIS_ADHOC_INV Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_' || p_inv_num || '.txt', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+
+    END IF;
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSIS_ADHOC_INV-'||SQLERRM);
+    WHEN OTHERS THEN
+    fnd_file.put_line(fnd_file.LOG,'Exception Occured in -XXSIS_ADHOC_INV-'||SQLERRM);
+    END;
+
+
+    -- ADHOC Invoices
+
+    --TWN Begin
+    FOR r IN c_acdn LOOP
+      -- TWN Loop
+      -- TWN ACDN
+      BEGIN
+      fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSIS_ACDN -- ');
+        ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                     'XXSIS_ACDN',
+                                                     '',
+                                                     '', -- start_time
+                                                     FALSE,
+                                                     -- subsequent                                                ,
+                                                     r.flight_no, -- Flight No
+                                                     r.cat_date -- Flight Date
+                                                     );
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,
+                            'After Request Submision Error =' || SQLERRM);
+      END;
+    fnd_file.put_line(fnd_file.LOG,'Transsys-r XXSIS_ACDN Request ID = '||ln_conc_req_id);
+      COMMIT;
+
+        BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Insertion Started 1***');
+      insert into XXSIS_OUT_ATTACHMENTS
+      values
+        (p_invid, --INVOICEHEADERID,
+         p_transid, --TRANSMISSIONID,
+         p_inv_num, --INVOICENUMBER,
+         p_filepath || '/Inv_ACDN_' || r.doc_no || '.pdf', -- FILE_NAME,
+         fnd_global.user_id, --CREATED_BY,
+         sysdate, --CREATION_DATE,
+         fnd_global.user_id, --LAST_UPDATED_BY,
+         sysdate, --LAST_UPDATE_DATE,
+         null, -- LAST_UPDATE_LOGIN
+         v_foldername,
+         ln_conc_req_id);
+         EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while inserting 1*** -- '||SQLERRM);
+         END;
+
+      -- TWN ACDN
+
+      -- XXSIS_MDN
+      BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Count Started *** service_id = 2');
+      SELECT COUNT(1)
+        INTO ln_cnt
+        FROM service_transactions a, catering_schedule_header b
+       WHERE a.cat_sch_id = b.cat_sch_id
+         AND b.flight_no = r.flight_no
+         AND b.cat_date = r.cat_date
+         AND a.service_id = 2
+         AND a.multi_ser_no IS NULL;
+       EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while count service id=2 *** -- '||SQLERRM);
+         END;
+
+     fnd_file.put_line(fnd_file.LOG,'ln_cnt1 *** = '||ln_cnt);
+      IF ln_cnt > 0 THEN
+        BEGIN
+          ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                       'XXSIS_MDN',
+                                                       '',
+                                                       '', -- start_time
+                                                       FALSE,
+                                                       -- subsequent                                                ,
+                                                       r.flight_no, -- Flight No
+                                                       r.cat_date -- Flight Date
+                                                       );
+        EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line(fnd_file.LOG,
+                              'After Request Submision Error =' || SQLERRM);
+        END;
+
+        COMMIT;
+
+      BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Insertion Started 2***');
+        insert into XXSIS_OUT_ATTACHMENTS
+        values
+          (p_invid, --INVOICEHEADERID,
+           p_transid, --TRANSMISSIONID,
+           p_inv_num, --INVOICENUMBER,
+           p_filepath || '/Inv_MDN_' || r.doc_no || '.pdf', -- FILE_NAME,
+           fnd_global.user_id, --CREATED_BY,
+           sysdate, --CREATION_DATE,
+           fnd_global.user_id, --LAST_UPDATED_BY,
+           sysdate, --LAST_UPDATE_DATE,
+           null, -- LAST_UPDATE_LOGIN
+           v_foldername,
+           ln_conc_req_id);
+           EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while inserting 2*** -- '||SQLERRM);
+         END;
+      END IF;
+
+      --XXSIS_MDN
+
+      -- XXSIS_ACSR
+      FOR r_acsr IN c_acsr(r.flight_no, r.cat_date) LOOP
+      BEGIN
+        fnd_file.put_line(fnd_file.LOG,'ln_cnt2 ****');
+        SELECT COUNT(1)
+          INTO ln_cnt
+--          fnd_file.put_line(fnd_file.LOG,'ln_cnt ****'||ln_cnt);
+          FROM acsr_headers             a,
+               service_transactions     b,
+               catering_schedule_header c
+         WHERE a.service_trans_no = b.service_trans_no
+           AND b.cat_sch_id = c.cat_sch_id
+           AND c.flight_no = r.flight_no
+           AND c.cat_date = r.cat_date
+           AND b.service_id = 1
+           AND b.multi_ser_no = r_acsr.multi_ser_no;
+           fnd_file.put_line(fnd_file.LOG,'ln_cnt ****'||ln_cnt);
+      EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while picking count ln_cnt2 **** -- '||SQLERRM);
+         END;
+        v_num := r.doc_no || '_' || r_acsr.multi_ser_no;
+
+        IF ln_cnt > 0 THEN
+          BEGIN
+          fnd_file.put_line(fnd_file.LOG,'XXSIS_ACSR');
+            ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                         'XXSIS_ACSR',
+                                                         '',
+                                                         '', -- start_time
+                                                         FALSE,
+                                                         -- subsequent                                                ,
+                                                         r.flight_no, -- Flight No
+                                                         r.cat_date, -- Flight Date
+                                                         r_acsr.multi_ser_no -- Multi Ser No
+                                                         );
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG,
+                                'After Request Submision Error =' ||
+                                SQLERRM);
+          END;
+
+          COMMIT;
+
+        BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Insertion Started 3***');
+          insert into XXSIS_OUT_ATTACHMENTS
+          values
+            (p_invid, --INVOICEHEADERID,
+             p_transid, --TRANSMISSIONID,
+             p_inv_num, --INVOICENUMBER,
+             p_filepath || '/Inv_ACSR_' || v_num || '.pdf', -- FILE_NAME,
+             fnd_global.user_id, --CREATED_BY,
+             sysdate, --CREATION_DATE,
+             fnd_global.user_id, --LAST_UPDATED_BY,
+             sysdate, --LAST_UPDATE_DATE,
+             null, -- LAST_UPDATE_LOGIN
+             v_foldername,
+             ln_conc_req_id);
+        EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while inserting 3*** -- '||SQLERRM);
+         END;
+        END IF;
+
+      END LOOP;
+
+      --XXSIS_ACSR
+
+      -- XXSIS_CCD
+      FOR r_ccd IN c_ccd(r.flight_no, r.cat_date) LOOP
+      BEGIN
+        fnd_file.put_line(fnd_file.LOG,'ln_cnt3 ****');
+        SELECT COUNT(1)
+          INTO ln_cnt
+--          fnd_file.put_line(fnd_file.LOG,'ln_cnt3 ****'||ln_cnt);
+--        SELECT COUNT(1)
+--          INTO ln_cnt
+          FROM ccd_headers              a,
+               service_transactions     b,
+               catering_schedule_header c
+         WHERE a.service_trans_no = b.service_trans_no
+           AND b.cat_sch_id = c.cat_sch_id
+           AND c.flight_no = r.flight_no
+           AND c.cat_date = r.cat_date
+           AND b.service_id = 7
+           AND b.multi_ser_no = r_ccd.multi_ser_no;
+           fnd_file.put_line(fnd_file.LOG,'ln_cnt3 ****'||ln_cnt);
+        EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while picking count ln_cnt3 **** -- '||SQLERRM);
+         END;
+
+        v_num := r.doc_no || '_' || r_ccd.multi_ser_no;
+
+        IF ln_cnt > 0 THEN
+          BEGIN
+            ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                         'XXSIS_CCD',
+                                                         '',
+                                                         '', -- start_time
+                                                         FALSE,
+                                                         -- subsequent                                                ,
+                                                         r.flight_no, -- Flight No
+                                                         r.cat_date, -- Flight Date
+                                                         r_ccd.multi_ser_no -- Multi Ser No
+                                                         );
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG,
+                                'After Request Submision Error =' ||
+                                SQLERRM);
+          END;
+
+          COMMIT;
+        BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Insertion Started 4***');
+          insert into XXSIS_OUT_ATTACHMENTS
+          values
+            (p_invid, --INVOICEHEADERID,
+             p_transid, --TRANSMISSIONID,
+             p_inv_num, --INVOICENUMBER,
+             p_filepath || '/Inv_CCD_' || v_num || '.pdf', -- FILE_NAME,
+             fnd_global.user_id, --CREATED_BY,
+             sysdate, --CREATION_DATE,
+             fnd_global.user_id, --LAST_UPDATED_BY,
+             sysdate, --LAST_UPDATE_DATE,
+             null, -- LAST_UPDATE_LOGIN
+             v_foldername,
+             ln_conc_req_id);
+        END;
+        END IF;
+
+      END LOOP;
+
+      --XXSIS_CCD
+
+      -- XXSIS_MISC
+
+      FOR r_misc IN c_misc(r.flight_no, r.cat_date) LOOP
+      fnd_file.put_line(fnd_file.LOG,'IN r_misc LOOP***');
+        SELECT COUNT(1)
+          INTO ln_cnt
+          FROM misc_charge_hdr          a,
+               service_transactions     b,
+               catering_schedule_header c
+         WHERE a.service_trans_no = b.service_trans_no
+           AND b.cat_sch_id = c.cat_sch_id
+           AND c.flight_no = r.flight_no
+           AND c.cat_date = r.cat_date
+           AND b.service_id = 10
+           AND b.multi_ser_no = r_misc.multi_ser_no;
+
+        v_num := r.doc_no || '_' || r_misc.multi_ser_no;
+
+        IF ln_cnt > 0 THEN
+          BEGIN
+            ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                         'XXSIS_MISC',
+                                                         '',
+                                                         '', -- start_time
+                                                         FALSE,
+                                                         -- subsequent                                                ,
+                                                         r.flight_no, -- Flight No
+                                                         r.cat_date, -- Flight Date
+                                                         r_misc.multi_ser_no);
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG,
+                                'After Request Submision Error =' ||
+                                SQLERRM);
+          END;
+
+          COMMIT;
+         fnd_file.put_line(fnd_file.LOG,'Insertion for Inv_MISC***');
+          insert into XXSIS_OUT_ATTACHMENTS
+          values
+            (p_invid, --INVOICEHEADERID,
+             p_transid, --TRANSMISSIONID,
+             p_inv_num, --INVOICENUMBER,
+             p_filepath || '/Inv_MISC_' || v_num || '.pdf', -- FILE_NAME,
+             fnd_global.user_id, --CREATED_BY,
+             sysdate, --CREATION_DATE,
+             fnd_global.user_id, --LAST_UPDATED_BY,
+             sysdate, --LAST_UPDATE_DATE,
+             null, -- LAST_UPDATE_LOGIN
+             v_foldername,
+             ln_conc_req_id);
+        END IF;
+
+      END LOOP;
+
+      --XXSIS_MISC
+
+      -- XXSIS_STD
+      FOR r_std IN c_std(r.flight_no, r.cat_date, r.doc_no) LOOP
+      fnd_file.put_line(fnd_file.LOG,'IN r_std LOOP***');
+        SELECT COUNT(1)
+          INTO ln_cnt
+          FROM std_uplift_prod_hdr
+         WHERE std_prod_id = r_std.std_prod_id;
+
+        v_num := r.doc_no || '_' || r_std.std_prod_id;
+
+        IF ln_cnt > 0 THEN
+          BEGIN
+            ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                         'XXSIS_STD',
+                                                         '',
+                                                         '', -- start_time
+                                                         FALSE,
+                                                         -- subsequent                                                ,
+                                                         r_std.std_prod_id -- Flight Date
+                                                         );
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG,
+                                'After Request Submision Error =' ||
+                                SQLERRM);
+          END;
+
+          COMMIT;
+        fnd_file.put_line(fnd_file.LOG,'Insertion for /Inv_STD_***');
+          insert into XXSIS_OUT_ATTACHMENTS
+          values
+            (p_invid, --INVOICEHEADERID,
+             p_transid, --TRANSMISSIONID,
+             p_inv_num, --INVOICENUMBER,
+             p_filepath || '/Inv_STD_' || v_num || '.pdf', -- FILE_NAME,
+             fnd_global.user_id, --CREATED_BY,
+             sysdate, --CREATION_DATE,
+             fnd_global.user_id, --LAST_UPDATED_BY,
+             sysdate, --LAST_UPDATE_DATE,
+             null, -- LAST_UPDATE_LOGIN
+             v_foldername,
+             ln_conc_req_id);
+        END IF;
+
+      END LOOP;
+
+      --XXSIS_STD
+
+      -- XXSIS_ADHOC
+      fnd_file.put_line(fnd_file.LOG,'In LOOP r_adhoc IN c_adhoc***');
+      FOR r_adhoc IN c_adhoc(r.flight_no, r.cat_date) LOOP
+        SELECT COUNT(1)
+          INTO ln_cnt
+          FROM adhoc_trans_hdr          a,
+               service_transactions     b,
+               catering_schedule_header c
+         WHERE a.service_trans_no = b.service_trans_no
+           AND b.cat_sch_id = c.cat_sch_id
+           AND c.flight_no = r.flight_no
+           AND c.cat_date = r.cat_date
+           AND b.service_id = 4
+           AND b.associate_service = r_adhoc.associate_service;
+
+        v_num := r.doc_no || '_' || r_adhoc.associate_service;
+
+        IF ln_cnt > 0 THEN
+          BEGIN
+          fnd_file.put_line(fnd_file.LOG,'XXSIS_ADHOC***');
+            ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                         'XXSIS_ADHOC',
+                                                         '',
+                                                         '', -- start_time
+                                                         FALSE,
+                                                         -- subsequent                                                ,
+                                                         r.flight_no, -- Flight No
+                                                         r.cat_date, -- Flight Date
+                                                         r_adhoc.associate_service --Associate Service
+                                                         );
+          EXCEPTION
+            WHEN OTHERS THEN
+              fnd_file.put_line(fnd_file.LOG,
+                                'After Request Submision Error =' ||
+                                SQLERRM);
+          END;
+
+          COMMIT;
+        fnd_file.put_line(fnd_file.LOG,'Insertion *** /Inv_ADHOC_');
+          insert into XXSIS_OUT_ATTACHMENTS
+          values
+            (p_invid, --INVOICEHEADERID,
+             p_transid, --TRANSMISSIONID,
+             p_inv_num, --INVOICENUMBER,
+             p_filepath || '/Inv_ADHOC_' || v_num || '.pdf', -- FILE_NAME,
+             fnd_global.user_id, --CREATED_BY,
+             sysdate, --CREATION_DATE,
+             fnd_global.user_id, --LAST_UPDATED_BY,
+             sysdate, --LAST_UPDATE_DATE,
+             null, -- LAST_UPDATE_LOGIN
+             v_foldername,
+             ln_conc_req_id);
+
+        END IF;
+      END LOOP;
+
+      --XXSIS_ADHOC
+
+      -- XXSIS_TWN_CANCEL
+      --    for r_cancel in c_cancel(r.FLIGHT_NO, r.CAT_DATE) loop
+      fnd_file.put_line(fnd_file.LOG,'XXSIS_TWN_CANCEL***');
+      BEGIN
+      fnd_file.put_line(fnd_file.LOG,'While picking in COUNT XXSIS_TWN_CANCEL***');
+      fnd_file.put_line(fnd_file.LOG,'r.flight_no = '||r.flight_no);
+      fnd_file.put_line(fnd_file.LOG,'r.cat_date = '||r.cat_date);
+      SELECT COUNT(1)
+        INTO ln_cnt
+        FROM meal_prod_headers        a,
+             service_transactions     b,
+             catering_schedule_header c
+       WHERE a.service_trans_no = b.service_trans_no
+         AND service_id = 9
+         AND b.cat_sch_id = c.cat_sch_id
+         AND c.flight_no = r.flight_no
+         AND c.cat_date = r.cat_date;
+         fnd_file.put_line(fnd_file.LOG,'ln_cnt XXSIS_TWN_CANCEL***  = '||ln_cnt);
+         EXCEPTION
+        WHEN OTHERS THEN
+          fnd_file.put_line(fnd_file.LOG,'Exception while picking Count-- '||SQLERRM);
+         END;
+
+      -- AND b.SERVICE_TRANS_NO = R_CANCEL.SERVICE_TRANS_NO;
+      IF ln_cnt > 0 THEN
+        BEGIN
+        fnd_file.put_line(fnd_file.LOG,'Submit request--XXSIS_TWN_CANCEL ***');
+          ln_conc_req_id := fnd_request.submit_request('TRANSSYS',
+                                                       'XXSIS_TWN_CANCEL',
+                                                       '',
+                                                       '', -- start_time
+                                                       FALSE,
+                                                       -- subsequent                                                ,
+                                                       r.flight_no, -- Flight No
+                                                       r.cat_date, -- Flight Date
+                                                       NULL --R_CANCEL.SERVICE_TRANS_NO --Service Trans No
+                                                       );
+        EXCEPTION
+          WHEN OTHERS THEN
+            fnd_file.put_line(fnd_file.LOG,
+                              'After Request Submision Error =' || SQLERRM);
+        END;
+
+        COMMIT;
+      fnd_file.put_line(fnd_file.LOG,'Insertion 6 ****');
+        insert into XXSIS_OUT_ATTACHMENTS
+        values
+          (p_invid, --INVOICEHEADERID,
+           p_transid, --TRANSMISSIONID,
+           p_inv_num, --INVOICENUMBER,
+           p_filepath || '/Inv_CANCEL_' || r.doc_no || '.pdf', -- FILE_NAME,
+           fnd_global.user_id, --CREATED_BY,
+           sysdate, --CREATION_DATE,
+           fnd_global.user_id, --LAST_UPDATED_BY,
+           sysdate, --LAST_UPDATE_DATE,
+           null, -- LAST_UPDATE_LOGIN
+           v_foldername,
+           ln_conc_req_id);
+      END IF;
+      --    end loop;
+    --XXSIS_TWN_CANCEL
+    END LOOP; -- TWN Loop
+    -- TWN Invoices
+    --TWN End
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      fnd_file.put_line(fnd_file.LOG,
+                        ' Exp in Generate concurrent output : ' || SQLERRM);
+  END p_inv_out;
+
+/* Start:: Added/Modified for SR 259267 */
+  function get_att_path(v_org_id number) return varchar2 is
+    v_path varchar2(100);
+	v_directory varchar2(200);
+  begin
+    SELECT A.DIRECTORY_NAME
+			INTO v_directory
+		FROM all_directories A,
+			FND_LOOKUP_VALUES_VL B
+		WHERE UPPER(A.DIRECTORY_NAME) = UPPER(B.MEANING)
+			AND B.LOOKUP_TYPE             = 'XXSIS_OUTBOUND_ATTACH_MAP'
+			--AND B.enabled_flag            = 'Y' -- Commented for fixing the multiple org issue
+			AND B.start_date_active      <= SYSDATE
+			AND (B.end_date_active       IS NULL
+			OR B.end_date_active          > SYSDATE)
+			AND UPPER(B.lookup_code)      = UPPER(
+			(SELECT name FROM hr_operating_units WHERE organization_id = v_org_id
+			));
+
+	select directory_path
+      into v_path
+      from all_directories
+     where directory_name = v_directory;
+    return v_path;
+  exception
+    when others then
+      fnd_file.put_line(fnd_file.LOG,
+                        'Exp in Getting Attachment path (DIR_TEMP_OUTBOUND_ATTACH) :' ||
+                        sqlerrm);
+  end;
+  /* End:: Added/Modified for SR 259267 */
+end XXSIS_ATTACHMENT_PKG;
