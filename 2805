@@ -15,7 +15,8 @@ SELECT
     (SELECT COUNT(INVOICENUMBER) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
     AND STATUS = 'MAPPED') UNPROCESSED_INVOICE_COUNT,
     (SELECT COUNT(INVOICENUMBER) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
-    AND STATUS NOT IN ('MAPPED','INTERFACED TO AP')) ERROR_INVOICE_COUNT,SUM(ISTOTALAMOUNTCLEARANCECURRENCY) TOTAL_AMOUNT,
+    AND STATUS NOT IN ('MAPPED','INTERFACED TO AP')) ERROR_INVOICE_COUNT,
+	SUM(ISTOTALAMOUNTCLEARANCECURRENCY) TOTAL_AMOUNT,
     (SELECT SUM(ISTOTALAMOUNTCLEARANCECURRENCY) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
     AND STATUS = 'MAPPED') UNPROCESSED_TOTAL_AMOUNT,
     (SELECT NVL(SUM(ISTOTALAMOUNTCLEARANCECURRENCY),0) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
@@ -23,7 +24,7 @@ SELECT
 FROM APPS.XXSIS_INVOICE_HEADER_T XIHT
 WHERE 
     1 = 1
-    AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANSMISSION_ID,XIHT.INTERNALTRANSMISSIONID)
+    AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
     AND XIHT.CREATION_DATE >= NVL(:P_FROM_DATE, XIHT.CREATION_DATE)
     AND XIHT.CREATION_DATE <= NVL(:P_TO_DATE, XIHT.CREATION_DATE)
 GROUP BY 
@@ -45,12 +46,13 @@ SELECT
 	SORGNAME1 SUPPLIER_NAME,
 	XIHT.CLEARANCECURRENCYCODE,
     ROUND((XILT.CHARGEAMOUNT/XIHT.EXCHANGERATE),2) AMOUNT,
-	XIHT.STATUS,XIHT.STATUSREASON
+	XIHT.STATUS,
+	XIHT.STATUSREASON
 FROM APPS.XXSIS_INVOICE_HEADER_T XIHT,
      XXSIS_INVOICE_LINES_T XILT
 WHERE 
     XIHT.INVOICEHEADERID = XILT.INVOICEHEADERID
-	AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANSMISSION_ID,XIHT.INTERNALTRANSMISSIONID)
+	AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
     AND XIHT.CREATION_DATE >= NVL(:P_FROM_DATE, XIHT.CREATION_DATE)
     AND XIHT.CREATION_DATE <= NVL(:P_TO_DATE, XIHT.CREATION_DATE)
     AND XIHT.STATUS = 'MAPPED'
@@ -77,7 +79,7 @@ FROM   APPS.XXSIS_INVOICE_HEADER_T XIHT,
        XXSIS_INVOICE_LINES_T XILT
 WHERE 
        XIHT.INVOICEHEADERID = XILT.INVOICEHEADERID
-       AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANSMISSION_ID,XIHT.INTERNALTRANSMISSIONID)
+       AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
        AND XIHT.CREATION_DATE >= NVL(:P_FROM_DATE, XIHT.CREATION_DATE)
        AND XIHT.CREATION_DATE <= NVL(:P_TO_DATE, XIHT.CREATION_DATE)
        AND XIHT.STATUS NOT IN ('MAPPED','INTERFACED TO AP')
@@ -86,82 +88,48 @@ WHERE
 </dataQuery>
   <dataStructure>
     <group name="G_MAIN" source="Q_MAIN">
-		<element name="VENDOR_NAME"			datatype="VARCHAR2"		value="VENDOR_NAME"/>
-		<element name="VENDOR_NO"			datatype="VARCHAR2"		value="SEGMENT1"/>
-		<element name="VAT_REGISTRATION_NUM" datatype="VARCHAR2"	value="VAT_REGISTRATION_NUM"/>
-		<element name="SUPPLIER_SITE_CODE"	datatype="VARCHAR2"		value="SUPPLIER_SITE_CODE"/>
-		<element name="SUPPLIER_COUNTRY"	datatype="VARCHAR2"		value="SUPPLIER_COUNTRY"/>		
-		<element name="INVOICE_NUM"			datatype="VARCHAR2"		value="INVOICE_NUM"/>		
-		<element name="INVOICE_DATE"		datatype="DATE"			value="INVOICE_DATE"/>
-		<element name="CURR_CODE"			datatype="VARCHAR2"		value="INVOICE_CURRENCY_CODE"/>	
-        <element name="INVOICE_AMOUNT"		datatype="NUMBER"		value="INVOICE_AMOUNT"/>
-		<element name="BASE_CURRENCY"		datatype="VARCHAR2"		value="BASE_CURRENCY"/>
-        <element name="BASE_AMOUNT"			datatype="NUMBER"		value="BASE_AMOUNT"/>
-		<element name="INV_SOURCE"			datatype="VARCHAR2"		value="INV_SOURCE"/>
-		<element name="BATCH_NAME"		    datatype="VARCHAR2"		value="BATCH_NAME"/>
-		<element name="DESC"				datatype="VARCHAR2"		value="DESCRIPTION"/>
-		<element name="DOC_SEQ_VALUE"		datatype="VARCHAR2"		value="DOC_SEQUENCE_VALUE"/>
-		<element name="USERNAME"			datatype="VARCHAR2"		value="USER_NAME"/>			
-		<element name="GL_DATE"				datatype="VARCHAR2"		value="GL_DATE"/>
-		<element name="INV_LINE_NUMBER"		datatype="NUMBER"		value="INV_LINE_NUMBER"/>
-		<element name="LINE_AMOUNT"			datatype="NUMBER"		value="LINE_AMOUNT"/>
-		<element name="LINE_BASE_AMOUNT"	datatype="NUMBER"		value="LINE_BASE_AMOUNT"/>
-		<element name="DISTRIBUTION_AMOUNT"	datatype="NUMBER"		value="DISTRIBUTION_AMOUNT"/>
-		<element name="TAX_RATE_CODE"		datatype="VARCHAR2"		value="TAX_RATE_CODE"/>	
-		<element name="TAX_RATE"			datatype="VARCHAR2"		value="TAX_RATE"/>	
-		<element name="GL_ACCOUNT"			datatype="VARCHAR2"		value="GL_ACCOUNT"/>		
+		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
+		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>
+		<element name="INVOICE_COUNT"                   datatype="NUMBER"   	value="INVOICE_COUNT"/>
+		<element name="UNPROCESSED_INVOICE_COUNT"	    datatype="NUMBER"	    value="UNPROCESSED_INVOICE_COUNT"/>
+		<element name="ERROR_INVOICE_COUNT"	            datatype="NUMBER"		value="ERROR_INVOICE_COUNT"/>		
+        <element name="TOTAL_AMOUNT"	                datatype="NUMBER"		value="TOTAL_AMOUNT"/>
+		<element name="UNPROCESSED_TOTAL_AMOUNT"	    datatype="NUMBER"		value="UNPROCESSED_TOTAL_AMOUNT"/>
+		<element name="ERROR_TOTAL_AMOUNT"	            datatype="NUMBER"		value="ERROR_TOTAL_AMOUNT"/>
+				
     </group>
 	<group name="G_UNPROCESSED" source="Q_UNPROCESSED">
-		<element name="VENDOR_NAME"			datatype="VARCHAR2"		value="VENDOR_NAME"/>
-		<element name="VENDOR_NO"			datatype="VARCHAR2"		value="SEGMENT1"/>
-		<element name="VAT_REGISTRATION_NUM" datatype="VARCHAR2"	value="VAT_REGISTRATION_NUM"/>
-		<element name="SUPPLIER_SITE_CODE"	datatype="VARCHAR2"		value="SUPPLIER_SITE_CODE"/>
-		<element name="SUPPLIER_COUNTRY"	datatype="VARCHAR2"		value="SUPPLIER_COUNTRY"/>		
-		<element name="INVOICE_NUM"			datatype="VARCHAR2"		value="INVOICE_NUM"/>		
-		<element name="INVOICE_DATE"		datatype="DATE"			value="INVOICE_DATE"/>
-		<element name="CURR_CODE"			datatype="VARCHAR2"		value="INVOICE_CURRENCY_CODE"/>	
-        <element name="INVOICE_AMOUNT"		datatype="NUMBER"		value="INVOICE_AMOUNT"/>
-		<element name="BASE_CURRENCY"		datatype="VARCHAR2"		value="BASE_CURRENCY"/>
-        <element name="BASE_AMOUNT"			datatype="NUMBER"		value="BASE_AMOUNT"/>
-		<element name="INV_SOURCE"			datatype="VARCHAR2"		value="INV_SOURCE"/>
-		<element name="BATCH_NAME"		    datatype="VARCHAR2"		value="BATCH_NAME"/>
-		<element name="DESC"				datatype="VARCHAR2"		value="DESCRIPTION"/>
-		<element name="DOC_SEQ_VALUE"		datatype="VARCHAR2"		value="DOC_SEQUENCE_VALUE"/>
-		<element name="USERNAME"			datatype="VARCHAR2"		value="USER_NAME"/>			
-		<element name="GL_DATE"				datatype="VARCHAR2"		value="GL_DATE"/>
-		<element name="INV_LINE_NUMBER"		datatype="NUMBER"		value="INV_LINE_NUMBER"/>
-		<element name="LINE_AMOUNT"			datatype="NUMBER"		value="LINE_AMOUNT"/>
-		<element name="LINE_BASE_AMOUNT"	datatype="NUMBER"		value="LINE_BASE_AMOUNT"/>
-		<element name="DISTRIBUTION_AMOUNT"	datatype="NUMBER"		value="DISTRIBUTION_AMOUNT"/>
-		<element name="TAX_RATE_CODE"		datatype="VARCHAR2"		value="TAX_RATE_CODE"/>	
-		<element name="TAX_RATE"			datatype="VARCHAR2"		value="TAX_RATE"/>	
-		<element name="GL_ACCOUNT"			datatype="VARCHAR2"		value="GL_ACCOUNT"/>		
+		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
+		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>	
+		<element name="INVOICENUMBER"			        datatype="VARCHAR2"		value="INVOICENUMBER"/>		
+		<element name="INVOICEDATE"		                datatype="VARCHAR2"			value="INVOICEDATE"/>
+		<element name="INVOICETYPE"			            datatype="VARCHAR2"		value="INVOICETYPE"/>
+		<element name="CHARGECATEGORY"					datatype="VARCHAR2"		value="CHARGECATEGORY"/>
+		<element name="IATA_CODE"			            datatype="VARCHAR2"		value="IATA_CODE"/>
+		<element name="CHARGECODE"			            datatype="VARCHAR2"		value="CHARGECODE"/>
+		<element name="DESCRIPTION"			            datatype="VARCHAR2"		value="DESCRIPTION"/>
+		<element name="SUPPLIER_NAME"			        datatype="VARCHAR2"		value="SUPPLIER_NAME"/>
+		<element name="CLEARANCECURRENCYCODE"			datatype="VARCHAR2"		value="CLEARANCECURRENCYCODE"/>
+		<element name="AMOUNT"			                datatype="NUMBER"		value="AMOUNT"/>
+		<element name="STATUS"			                datatype="VARCHAR2"		value="STATUS"/>
+		<element name="STATUSREASON"			        datatype="VARCHAR2"		value="STATUSREASON"/>
+
     </group>
-	<group name="Q_ERRORED" source="Q_ERRORED">
-		<element name="VENDOR_NAME"			datatype="VARCHAR2"		value="VENDOR_NAME"/>
-		<element name="VENDOR_NO"			datatype="VARCHAR2"		value="SEGMENT1"/>
-		<element name="VAT_REGISTRATION_NUM" datatype="VARCHAR2"	value="VAT_REGISTRATION_NUM"/>
-		<element name="SUPPLIER_SITE_CODE"	datatype="VARCHAR2"		value="SUPPLIER_SITE_CODE"/>
-		<element name="SUPPLIER_COUNTRY"	datatype="VARCHAR2"		value="SUPPLIER_COUNTRY"/>		
-		<element name="INVOICE_NUM"			datatype="VARCHAR2"		value="INVOICE_NUM"/>		
-		<element name="INVOICE_DATE"		datatype="DATE"			value="INVOICE_DATE"/>
-		<element name="CURR_CODE"			datatype="VARCHAR2"		value="INVOICE_CURRENCY_CODE"/>	
-        <element name="INVOICE_AMOUNT"		datatype="NUMBER"		value="INVOICE_AMOUNT"/>
-		<element name="BASE_CURRENCY"		datatype="VARCHAR2"		value="BASE_CURRENCY"/>
-        <element name="BASE_AMOUNT"			datatype="NUMBER"		value="BASE_AMOUNT"/>
-		<element name="INV_SOURCE"			datatype="VARCHAR2"		value="INV_SOURCE"/>
-		<element name="BATCH_NAME"		    datatype="VARCHAR2"		value="BATCH_NAME"/>
-		<element name="DESC"				datatype="VARCHAR2"		value="DESCRIPTION"/>
-		<element name="DOC_SEQ_VALUE"		datatype="VARCHAR2"		value="DOC_SEQUENCE_VALUE"/>
-		<element name="USERNAME"			datatype="VARCHAR2"		value="USER_NAME"/>			
-		<element name="GL_DATE"				datatype="VARCHAR2"		value="GL_DATE"/>
-		<element name="INV_LINE_NUMBER"		datatype="NUMBER"		value="INV_LINE_NUMBER"/>
-		<element name="LINE_AMOUNT"			datatype="NUMBER"		value="LINE_AMOUNT"/>
-		<element name="LINE_BASE_AMOUNT"	datatype="NUMBER"		value="LINE_BASE_AMOUNT"/>
-		<element name="DISTRIBUTION_AMOUNT"	datatype="NUMBER"		value="DISTRIBUTION_AMOUNT"/>
-		<element name="TAX_RATE_CODE"		datatype="VARCHAR2"		value="TAX_RATE_CODE"/>	
-		<element name="TAX_RATE"			datatype="VARCHAR2"		value="TAX_RATE"/>	
-		<element name="GL_ACCOUNT"			datatype="VARCHAR2"		value="GL_ACCOUNT"/>		
+	<group name="G_ERRORED" source="Q_ERRORED">
+		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
+		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>	
+		<element name="INVOICENUMBER"			        datatype="VARCHAR2"		value="INVOICENUMBER"/>		
+		<element name="INVOICEDATE"		                datatype="VARCHAR2"			value="INVOICEDATE"/>
+		<element name="INVOICETYPE"			            datatype="VARCHAR2"		value="INVOICETYPE"/>
+		<element name="CHARGECATEGORY"					datatype="VARCHAR2"		value="CHARGECATEGORY"/>
+		<element name="IATA_CODE"			            datatype="VARCHAR2"		value="IATA_CODE"/>
+		<element name="CHARGECODE"			            datatype="VARCHAR2"		value="CHARGECODE"/>
+		<element name="DESCRIPTION"			            datatype="VARCHAR2"		value="DESCRIPTION"/>
+		<element name="SUPPLIER_NAME"			        datatype="VARCHAR2"		value="SUPPLIER_NAME"/>
+		<element name="CLEARANCECURRENCYCODE"			datatype="VARCHAR2"		value="CLEARANCECURRENCYCODE"/>
+		<element name="AMOUNT"			                datatype="NUMBER"		value="AMOUNT"/>
+		<element name="STATUS"			                datatype="VARCHAR2"		value="STATUS"/>
+		<element name="STATUSREASON"			        datatype="VARCHAR2"		value="STATUSREASON"/>		
     </group>
   </dataStructure>
 </dataTemplate>
