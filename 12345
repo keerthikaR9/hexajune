@@ -1,135 +1,425 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<dataTemplate name ="XXSISRECRPT" description="XXSIS ICH Reconciliation Report" version="1.0">
-<parameters>
-<parameter name="P_FROM_DATE" dataType="DATE" />
-<parameter name="P_TO_DATE" dataType="DATE" />
-<parameter name="P_TRANS_ID" dataType="VARCHAR2"/>
-</parameters>
-<dataQuery>
-<sqlStatement name="Q_MAIN">
-<![CDATA[
-SELECT 
-    XIHT.INTERNALTRANSMISSIONID,
-	XIHT.SETTLEMENTMONTHPERIOD,
-	COUNT(XIHT.INVOICENUMBER) INVOICE_COUNT,
-    (SELECT COUNT(INVOICENUMBER) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
-    AND STATUS = 'MAPPED') UNPROCESSED_INVOICE_COUNT,
-    (SELECT COUNT(INVOICENUMBER) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
-    AND STATUS NOT IN ('MAPPED','INTERFACED TO AP')) ERROR_INVOICE_COUNT,
-	NVL(SUM(ISTOTALAMOUNTCLEARANCECURRENCY),0) TOTAL_AMOUNT,
-    (SELECT NVL(SUM(ISTOTALAMOUNTCLEARANCECURRENCY),0) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
-    AND STATUS = 'MAPPED') UNPROCESSED_TOTAL_AMOUNT,
-    (SELECT NVL(SUM(ISTOTALAMOUNTCLEARANCECURRENCY),0) FROM XXSIS_INVOICE_HEADER_T WHERE INTERNALTRANSMISSIONID = XIHT.INTERNALTRANSMISSIONID
-    AND STATUS NOT IN ('MAPPED','INTERFACED TO AP')) ERROR_TOTAL_AMOUNT
-FROM APPS.XXSIS_INVOICE_HEADER_T XIHT
-WHERE 
-    1 = 1
-    AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
-    AND TRUNC(XIHT.CREATION_DATE) >= NVL(:P_FROM_DATE, TRUNC(XIHT.CREATION_DATE))
-    AND TRUNC(XIHT.CREATION_DATE) <= NVL(:P_TO_DATE, TRUNC(XIHT.CREATION_DATE))
-GROUP BY 
-    XIHT.INTERNALTRANSMISSIONID,XIHT.SETTLEMENTMONTHPERIOD
-]]>
-</sqlStatement>
-<sqlStatement name="Q_UNPROCESSED">
-<![CDATA[
-SELECT 
-    XIHT.INTERNALTRANSMISSIONID,
-	XIHT.SETTLEMENTMONTHPERIOD,
-	XIHT.INVOICENUMBER,
-    TO_CHAR(TO_DATE(XIHT.INVOICEDATE,'YYYY-MM-DD'), 'DD-MON-YYYY') INVOICEDATE,
-	XIHT.INVOICETYPE,
-	XIHT.CHARGECATEGORY,
-	XIHT.SORGDESIGNATOR||XIHT.SORGID IATA_CODE,
-    XILT.CHARGECODE,
-	XILT.DESCRIPTION,
-	SORGNAME1 SUPPLIER_NAME,
-	XIHT.CLEARANCECURRENCYCODE,
-    ROUND((XILT.CHARGEAMOUNT/XIHT.EXCHANGERATE),2) AMOUNT,
-	XIHT.STATUS,
-	XIHT.STATUSREASON
-FROM APPS.XXSIS_INVOICE_HEADER_T XIHT,
-     XXSIS_INVOICE_LINES_T XILT
-WHERE 
-    XIHT.INVOICEHEADERID = XILT.INVOICEHEADERID
-	AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
-    AND TRUNC(XIHT.CREATION_DATE) >= NVL(:P_FROM_DATE, TRUNC(XIHT.CREATION_DATE))
-    AND TRUNC(XIHT.CREATION_DATE) <= NVL(:P_TO_DATE, TRUNC(XIHT.CREATION_DATE))
-    AND XIHT.STATUS = 'MAPPED'
-]]>
-</sqlStatement>
+create or replace PACKAGE BODY XXOA_AR_INV_MAIL_PKG
+AS
+  FUNCTION blob_to_base64_clob(
+      p_blob BLOB)
+    RETURN CLOB
+  IS
+    l_clob CLOB;
+    l_step PLS_INTEGER := 12000;
+  BEGIN
+    IF p_blob IS NULL THEN
+      RETURN NULL;
+    END IF;
+    DBMS_LOB.createtemporary(l_clob, TRUE);
+    FOR i IN 0 .. TRUNC((DBMS_LOB.getlength(p_blob) - 1 ) / l_step)
+    LOOP
+      DBMS_LOB.writeappend(l_clob, LENGTH(UTL_RAW.cast_to_varchar2(UTL_ENCODE.base64_encode(DBMS_LOB.substr(p_blob, l_step, i * l_step + 1)))), UTL_RAW.cast_to_varchar2(UTL_ENCODE.base64_encode(DBMS_LOB.substr(p_blob, l_step, i * l_step + 1))));
+    END LOOP;
+    RETURN l_clob;
+  END;
 
-<sqlStatement name="Q_ERRORED">
-<![CDATA[
-SELECT XIHT.INTERNALTRANSMISSIONID,
-       XIHT.SETTLEMENTMONTHPERIOD,
-	   XIHT.INVOICENUMBER,
-	   TO_CHAR(TO_DATE(XIHT.INVOICEDATE,'YYYY-MM-DD'), 'DD-MON-YYYY') INVOICEDATE,
-	   XIHT.INVOICETYPE,
-	   XIHT.CHARGECATEGORY,
-	   XIHT.SORGDESIGNATOR||XIHT.SORGID IATA_CODE,
-       XILT.CHARGECODE,
-	   XILT.DESCRIPTION,
-	   SORGNAME1 SUPPLIER_NAME,
-	   XIHT.CLEARANCECURRENCYCODE,
-       ROUND((XILT.CHARGEAMOUNT/XIHT.EXCHANGERATE),2) AMOUNT,
-	   XIHT.STATUS,
-	   XIHT.STATUSREASON
-FROM   APPS.XXSIS_INVOICE_HEADER_T XIHT,
-       XXSIS_INVOICE_LINES_T XILT
-WHERE 
-       XIHT.INVOICEHEADERID = XILT.INVOICEHEADERID
-       AND XIHT.INTERNALTRANSMISSIONID = NVL(:P_TRANS_ID,XIHT.INTERNALTRANSMISSIONID)
-	   AND TRUNC(XIHT.CREATION_DATE) >= NVL(:P_FROM_DATE, TRUNC(XIHT.CREATION_DATE))
-       AND TRUNC(XIHT.CREATION_DATE) <= NVL(:P_TO_DATE, TRUNC(XIHT.CREATION_DATE))
-       AND XIHT.STATUS NOT IN ('MAPPED','INTERFACED TO AP')
-]]>
-</sqlStatement>
-</dataQuery>
-  <dataStructure>
-    <group name="G_MAIN" source="Q_MAIN">
-		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
-		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>
-		<element name="INVOICE_COUNT"                   datatype="NUMBER"   	value="INVOICE_COUNT"/>
-		<element name="UNPROCESSED_INVOICE_COUNT"	    datatype="NUMBER"	    value="UNPROCESSED_INVOICE_COUNT"/>
-		<element name="ERROR_INVOICE_COUNT"	            datatype="NUMBER"		value="ERROR_INVOICE_COUNT"/>		
-        <element name="TOTAL_AMOUNT"	                datatype="NUMBER"		value="TOTAL_AMOUNT"/>
-		<element name="UNPROCESSED_TOTAL_AMOUNT"	    datatype="NUMBER"		value="UNPROCESSED_TOTAL_AMOUNT"/>
-		<element name="ERROR_TOTAL_AMOUNT"	            datatype="NUMBER"		value="ERROR_TOTAL_AMOUNT"/>
-				
-    </group>
-	<group name="G_UNPROCESSED" source="Q_UNPROCESSED">
-		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
-		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>	
-		<element name="INVOICENUMBER"			        datatype="VARCHAR2"		value="INVOICENUMBER"/>		
-		<element name="INVOICEDATE"		                datatype="VARCHAR2"		value="INVOICEDATE"/>
-		<element name="INVOICETYPE"			            datatype="VARCHAR2"		value="INVOICETYPE"/>
-		<element name="CHARGECATEGORY"					datatype="VARCHAR2"		value="CHARGECATEGORY"/>
-		<element name="IATA_CODE"			            datatype="VARCHAR2"		value="IATA_CODE"/>
-		<element name="CHARGECODE"			            datatype="VARCHAR2"		value="CHARGECODE"/>
-		<element name="DESCRIPTION"			            datatype="VARCHAR2"		value="DESCRIPTION"/>
-		<element name="SUPPLIER_NAME"			        datatype="VARCHAR2"		value="SUPPLIER_NAME"/>
-		<element name="CLEARANCECURRENCYCODE"			datatype="VARCHAR2"		value="CLEARANCECURRENCYCODE"/>
-		<element name="AMOUNT"			                datatype="NUMBER"		value="AMOUNT"/>
-		<element name="STATUS"			                datatype="VARCHAR2"		value="STATUS"/>
-		<element name="STATUSREASON"			        datatype="VARCHAR2"		value="STATUSREASON"/>
+  PROCEDURE SEND_INVOICE_EMAILS(
+      errbuf OUT VARCHAR2,
+      retcode OUT NUMBER,
+      p_invoice_num IN VARCHAR2 DEFAULT NULL,
+      p_trx_type    IN VARCHAR2 DEFAULT NULL,
+      p_start_date  IN VARCHAR2 DEFAULT NULL,
+      p_end_date    IN VARCHAR2 DEFAULT NULL,
+      p_force_send  IN VARCHAR2 DEFAULT 'Y' )
+  IS
+    P_START_DATE_INT DATE := fnd_date.canonical_to_date(p_start_date);
+    P_END_DATE_INT   DATE := fnd_date.canonical_to_date(p_end_date);
+    ln_request_id  NUMBER;
+    l_phase        VARCHAR2(30);
+    l_status       VARCHAR2(30);
+    l_dev_phase    VARCHAR2(30);
+    l_dev_status   VARCHAR2(30);
+    l_message      VARCHAR2(2000);
+    l_wait         BOOLEAN;
+    l_boolean      BOOLEAN;
+    ld_del_out     BOOLEAN;
+    lc_req_data    BOOLEAN;
+    v_outfile_name VARCHAR2(500);
+    v_directory    VARCHAR2(100) := 'XXOA_EBS_CONC_OUT';
+    v_bfile        BFILE;
+    v_pdf_blob     BLOB;
+    v_zip_blob     BLOB := NULL;
+    l_mail_conn    UTL_SMTP.connection;
+    l_smtp_host    VARCHAR2(100) := 'smtp.omanair.com';
+    l_smtp_port    NUMBER        := 25;
+    l_from_email   VARCHAR2(200) := 'applprod@omanair.com';
+    l_to_email     VARCHAR2(200);
+    L_MAIL_CC      VARCHAR2(2000) := '';
+    L_MAIL_INV_CREATOR      VARCHAR2(2000) := '';
+    l_boundary     VARCHAR2(50)   := '----=_INVOICE_BOUNDARY';
+    v_display_name VARCHAR2(500);
+    v_zip_name     VARCHAR2(100);
+    v_sent_count   NUMBER := 0;
+    v_skip_count   NUMBER := 0;
+    l_b64_clob     CLOB;
+    l_zip_b64      CLOB;
+    l_offset       NUMBER;
+    l_chunk_size   CONSTANT NUMBER := 76;
+    l_reply        UTL_SMTP.reply;
+    l_current_mail_size NUMBER := 0;
+    l_mail_part         NUMBER := 1;
+    l_limit             NUMBER := 10 * 1024 * 1024;
+    v_user_id           NUMBER := fnd_global.user_id;
+    v_resp_id           NUMBER := fnd_global.resp_id;
+    v_resp_appl_id      NUMBER := fnd_global.resp_appl_id;
+    v_org_id            NUMBER;
+    l_soa_date   VARCHAR2(20);
 
-    </group>
-	<group name="G_ERRORED" source="Q_ERRORED">
-		<element name="INTERNALTRANSMISSIONID"			datatype="VARCHAR2"		value="INTERNALTRANSMISSIONID"/>
-		<element name="SETTLEMENTMONTHPERIOD"			datatype="VARCHAR2"		value="SETTLEMENTMONTHPERIOD"/>	
-		<element name="INVOICENUMBER"			        datatype="VARCHAR2"		value="INVOICENUMBER"/>		
-		<element name="INVOICEDATE"		                datatype="VARCHAR2"		value="INVOICEDATE"/>
-		<element name="INVOICETYPE"			            datatype="VARCHAR2"		value="INVOICETYPE"/>
-		<element name="CHARGECATEGORY"					datatype="VARCHAR2"		value="CHARGECATEGORY"/>
-		<element name="IATA_CODE"			            datatype="VARCHAR2"		value="IATA_CODE"/>
-		<element name="CHARGECODE"			            datatype="VARCHAR2"		value="CHARGECODE"/>
-		<element name="DESCRIPTION"			            datatype="VARCHAR2"		value="DESCRIPTION"/>
-		<element name="SUPPLIER_NAME"			        datatype="VARCHAR2"		value="SUPPLIER_NAME"/>
-		<element name="CLEARANCECURRENCYCODE"			datatype="VARCHAR2"		value="CLEARANCECURRENCYCODE"/>
-		<element name="AMOUNT"			                datatype="NUMBER"		value="AMOUNT"/>
-		<element name="STATUS"			                datatype="VARCHAR2"		value="STATUS"/>
-		<element name="STATUSREASON"			        datatype="VARCHAR2"		value="STATUSREASON"/>		
-    </group>
-  </dataStructure>
-</dataTemplate>
+    CURSOR c_inv_range IS
+   /*   SELECT rcta.trx_number,
+        rcta.trx_date,
+        rcta.customer_trx_id,
+        rcta.bill_to_customer_id,
+        rctt.name AS user_defined_type,
+        rcta.attribute6,
+        rcta.attribute7,
+        DECODE(rctt.type, 'INV', 'Invoice', 'CM', 'Credit Memo', 'DM', 'Debit Memo', rctt.type) AS full_type_meaning
+      FROM ra_customer_trx_all rcta,
+        ra_cust_trx_types_all rctt
+      WHERE rcta.cust_trx_type_id = rctt.cust_trx_type_id
+      AND rcta.org_id             = rctt.org_id
+      AND rctt.name IN (SELECT DESCRIPTION 
+                    FROM fnd_lookup_values 
+                    WHERE lookup_type = 'XXOA_INV_TRX_TYPE' 
+                      AND enabled_flag = 'Y' 
+                      AND language = 'US'
+                      AND SYSDATE BETWEEN nvl(start_date_active, SYSDATE) AND nvl(end_date_active, SYSDATE))
+      AND rcta.trx_number         = NVL(p_invoice_num, rcta.trx_number)
+      AND rctt.name               = NVL (p_trx_type,rctt.name)
+      AND rcta.trx_date BETWEEN NVL(P_START_DATE_INT, rcta.trx_date) AND NVL(P_END_DATE_INT, rcta.trx_date);*/
+      
+     /* SELECT rcta.trx_number,
+       rcta.trx_date,
+       rcta.customer_trx_id,
+       rcta.bill_to_customer_id,
+       rctt.name AS user_defined_type,
+       rcta.attribute6,
+       rcta.attribute7,
+       DECODE(rctt.type, 'INV', 'Invoice', 'CM', 'Credit Memo', 'DM', 'Debit Memo', rctt.type) AS full_type_meaning,
+       -- Added Balance Column
+       aps.amount_due_remaining AS inv_balance,
+       -- Added Last Day of Month for the email text
+       TO_CHAR(LAST_DAY(SYSDATE), 'DD MON''YY') AS soa_date
+FROM ra_customer_trx_all rcta,
+     ra_cust_trx_types_all rctt,
+     ar_payment_schedules_all aps -- Join for Balance
+WHERE rcta.cust_trx_type_id = rctt.cust_trx_type_id
+  AND rcta.org_id             = rctt.org_id
+  AND rcta.customer_trx_id    = aps.customer_trx_id -- Link Invoice to Payment Schedule
+  AND rctt.name IN (SELECT DESCRIPTION 
+                    FROM fnd_lookup_values 
+                    WHERE lookup_type = 'XXOA_INV_TRX_TYPE' 
+                      AND enabled_flag = 'Y' 
+                      AND language = 'US'
+                      AND SYSDATE BETWEEN nvl(start_date_active, SYSDATE) AND nvl(end_date_active, SYSDATE))
+  AND rcta.trx_number         = NVL(p_invoice_num, rcta.trx_number)
+  AND rctt.name               = NVL (p_trx_type,rctt.name)
+  AND rcta.trx_date BETWEEN NVL(P_START_DATE_INT, rcta.trx_date) AND NVL(P_END_DATE_INT, rcta.trx_date);*/
+  
+  SELECT rcta.trx_number,
+       rcta.trx_date,
+       rcta.customer_trx_id,
+       rcta.bill_to_customer_id,
+       rctt.name AS user_defined_type,
+       rcta.attribute6,
+       rcta.attribute7,
+       DECODE(rctt.type, 'INV', 'Invoice', 'CM', 'Credit Memo', 'DM', 'Debit Memo', rctt.type) AS full_type_meaning,
+       hp.party_name AS customer_name,
+       -- Added Balance Column
+       aps.amount_due_remaining AS inv_balance,
+       -- Added Last Day of Month for the email text
+       --TO_CHAR(LAST_DAY(SYSDATE), 'DD MON''YY') AS soa_date
+       TO_CHAR(LAST_DAY(rcta.trx_date), 'DD MON''YY') AS soa_date
+FROM ra_customer_trx_all rcta,
+     ra_cust_trx_types_all rctt,
+     hz_cust_accounts hca, -- Added for Customer Account
+     hz_parties hp  ,       -- Added for Party Name
+     ar_payment_schedules_all aps -- Join for Balance
+WHERE rcta.cust_trx_type_id = rctt.cust_trx_type_id
+  AND rcta.org_id             = rctt.org_id
+  AND rcta.customer_trx_id    = aps.customer_trx_id -- Link Invoice to Payment Schedule
+    AND rcta.bill_to_customer_id = hca.cust_account_id -- Link to Account
+  AND hca.party_id             = hp.party_id          -- Link to Party
+  AND rctt.name IN (SELECT DESCRIPTION 
+                    FROM fnd_lookup_values 
+                    WHERE lookup_type = 'XXOA_INV_TRX_TYPE' 
+                      AND enabled_flag = 'Y' 
+                      AND language = 'US'
+                      AND SYSDATE BETWEEN nvl(start_date_active, SYSDATE) AND nvl(end_date_active, SYSDATE))
+  AND rcta.trx_number         = NVL(p_invoice_num, rcta.trx_number)
+  AND rctt.name               = NVL (p_trx_type,rctt.name)
+  AND rcta.trx_date BETWEEN NVL(P_START_DATE_INT, rcta.trx_date) AND NVL(P_END_DATE_INT, rcta.trx_date);
+
+
+    CURSOR c_docs(p_trx_id NUMBER) IS
+      SELECT fl.file_name,
+        fl.file_data
+      FROM fnd_attached_documents fad,
+        fnd_documents fd,
+        fnd_lobs fl
+      WHERE fad.entity_name = 'RA_CUSTOMER_TRX'
+      AND fad.pk1_value     = TO_CHAR(p_trx_id)
+      AND fd.document_id    = fad.document_id
+      AND fl.file_id        = fd.media_id;
+
+    PROCEDURE start_new_mail_part(
+        p_trx         VARCHAR2,
+        p_part        NUMBER,
+        p_customer_id NUMBER,
+        p_cust_name    VARCHAR2, -- Add this
+        p_balance      NUMBER,   -- Add this
+        p_soa_date     VARCHAR2  -- Add this (e.g. 31 JAN'26))
+        )
+    IS
+      l_subject VARCHAR2(300);
+    BEGIN
+      l_subject := 'OA AR Transaction - ' || p_trx || CASE WHEN p_part > 1 THEN ' (Part ' || p_part || ')' ELSE '' END;
+      BEGIN
+        SELECT email_address
+        INTO l_to_email
+        FROM
+          (SELECT hcp.email_address, 1 AS priority
+          FROM hz_cust_acct_sites_all hcas, hz_party_sites hps, hz_contact_points hcp
+          WHERE hcas.cust_account_id = p_customer_id AND hcas.party_site_id = hps.party_site_id
+          AND hcp.owner_table_name = 'HZ_PARTY_SITES' AND hcp.owner_table_id = hps.party_site_id
+          AND hcp.contact_point_type = 'EMAIL' AND hcp.primary_flag = 'Y' AND hcp.status = 'A'
+          UNION ALL
+          SELECT hcp.email_address, 2 AS priority
+          FROM hz_cust_accounts hca, hz_parties hp, hz_contact_points hcp
+          WHERE hca.cust_account_id = p_customer_id AND hca.party_id = hp.party_id
+          AND hcp.owner_table_name = 'HZ_PARTIES' AND hcp.owner_table_id = hp.party_id
+          AND hcp.contact_point_type = 'EMAIL' AND hcp.primary_flag = 'Y' AND hcp.status = 'A'
+          ORDER BY priority)
+        WHERE ROWNUM = 1;
+      EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        FND_FILE.PUT_LINE(FND_FILE.LOG, 'ERROR: No Primary Email found for Customer ID: ' || p_customer_id);
+        DBMS_OUTPUT.PUT_LINE('ERROR: No Primary Email found for Customer ID: ' || p_customer_id);
+        RAISE;
+      END;
+
+      BEGIN
+        SELECT listagg(DESCRIPTION,',') WITHIN GROUP (ORDER BY DESCRIPTION)
+        INTO L_MAIL_CC
+        FROM FND_LOOKUP_VALUES
+        WHERE LOOKUP_TYPE ='XXOA_INV_PRINT_CC_EMAIL' AND LANGUAGE ='US' AND ENABLED_FLAG  ='Y';
+        FND_FILE.PUT_LINE(FND_FILE.LOG, 'MAIL_CC List: ' || L_MAIL_CC);
+        DBMS_OUTPUT.PUT_LINE('MAIL_CC List: ' || L_MAIL_CC);
+      EXCEPTION
+      WHEN OTHERS THEN
+        FND_FILE.PUT_LINE (FND_FILE.LOG,'Exception fetching MAIL_CC: ' ||sqlerrm);
+        DBMS_OUTPUT.PUT_LINE('Exception fetching MAIL_CC: ' ||sqlerrm);
+      END;
+      
+       BEGIN
+        select b.email_address into L_MAIL_INV_CREATOR 
+        from ra_customer_trx_all a, fnd_user b
+        where a.created_by=b.user_id
+        and a.trx_number=p_trx;
+        FND_FILE.PUT_LINE(FND_FILE.LOG, 'Invoice creator email: ' || L_MAIL_INV_CREATOR);
+        DBMS_OUTPUT.PUT_LINE('Invoice creator email: ' || L_MAIL_INV_CREATOR);
+      EXCEPTION
+      WHEN OTHERS THEN
+        FND_FILE.PUT_LINE (FND_FILE.LOG,'Exception fetching L_MAIL_INV_CREATOR: ' ||sqlerrm);
+        DBMS_OUTPUT.PUT_LINE('Exception fetching L_MAIL_INV_CREATOR: ' ||sqlerrm);
+      END;
+
+      l_mail_conn := UTL_SMTP.open_connection(l_smtp_host, l_smtp_port, tx_timeout => 300);
+      UTL_SMTP.helo(l_mail_conn, l_smtp_host);
+      UTL_SMTP.mail(l_mail_conn, l_from_email);
+      UTL_SMTP.rcpt(l_mail_conn, l_to_email);
+      L_MAIL_CC := L_MAIL_CC ||','||L_MAIL_INV_CREATOR;
+      IF L_MAIL_CC IS NOT NULL THEN
+        FOR i IN (SELECT regexp_substr(L_MAIL_CC, '[^,]+', 1, LEVEL) AS email FROM dual CONNECT BY regexp_substr(L_MAIL_CC, '[^,]+', 1, LEVEL) IS NOT NULL)
+        LOOP
+          UTL_SMTP.rcpt(l_mail_conn, i.email);
+        END LOOP;
+      END IF;
+      UTL_SMTP.open_data(l_mail_conn);
+      UTL_SMTP.write_data(l_mail_conn, 'From: ' || l_from_email || UTL_TCP.crlf || 'To: ' || l_to_email || UTL_TCP.crlf ||'Cc: ' || L_MAIL_CC || UTL_TCP.crlf || 'Subject: ' || l_subject || UTL_TCP.crlf || 'MIME-Version: 1.0' || UTL_TCP.crlf || 'Content-Type: multipart/mixed; boundary="' || l_boundary || '"' || UTL_TCP.crlf || UTL_TCP.crlf);
+      --UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || UTL_TCP.crlf || 'Content-Type: text/plain; charset=UTF-8' || UTL_TCP.crlf || UTL_TCP.crlf || 'Dear Customer,' || UTL_TCP.crlf || UTL_TCP.crlf || 'Please find attached Invoice Print Report and Documents for Invoice: ' || p_trx || '.' || UTL_TCP.crlf || UTL_TCP.crlf || 'Best regards,' || UTL_TCP.crlf || 'Oman Air Receivables Team' || UTL_TCP.crlf);
+   UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || UTL_TCP.crlf || 
+          'Content-Type: text/plain; charset=UTF-8' || UTL_TCP.crlf || UTL_TCP.crlf || 
+          'Dear ' || p_cust_name || ',' || UTL_TCP.crlf || UTL_TCP.crlf || 
+          -- 'Dear ' || 'Customer' || ',' || UTL_TCP.crlf || UTL_TCP.crlf || 
+          'Please find the attached invoice no. ' || p_trx || ' for RO ' || trim(to_char(p_balance, '999,999.999')) || 
+          ' along with its supporting documents.' || UTL_TCP.crlf || UTL_TCP.crlf || 
+          --'Refer attached SOA as of ' || p_soa_date || ' the outstanding is RO ' || trim(to_char(p_balance, '999,999.999')) || '.' || UTL_TCP.crlf || UTL_TCP.crlf ||
+          'Kindly arrange to settle the outstanding at the earliest.' || UTL_TCP.crlf || UTL_TCP.crlf || 
+          'Best regards,' || UTL_TCP.crlf || 
+          'Oman Air Receivables Team' || UTL_TCP.crlf);
+    END start_new_mail_part;
+
+  BEGIN
+    -- SMTP VALIDATION CHECK
+    BEGIN
+      l_mail_conn := UTL_SMTP.open_connection(l_smtp_host, l_smtp_port, tx_timeout => 10);
+      UTL_SMTP.helo(l_mail_conn, l_smtp_host);
+      UTL_SMTP.quit(l_mail_conn);
+      FND_FILE.PUT_LINE(FND_FILE.LOG, 'SMTP Server connection validated successfully.');
+      DBMS_OUTPUT.PUT_LINE('SMTP Server connection validated successfully.');
+    EXCEPTION WHEN OTHERS THEN
+      FND_FILE.PUT_LINE(FND_FILE.LOG, 'CRITICAL: Cannot connect to SMTP Server: '||l_smtp_host||'. Error: '||SQLERRM);
+      DBMS_OUTPUT.PUT_LINE('CRITICAL: Cannot connect to SMTP Server: '||l_smtp_host||'. Error: '||SQLERRM);
+      retcode := 2; errbuf := 'SMTP Connection Failed'; RETURN;
+    END;
+
+    fnd_global.apps_initialize(v_user_id, v_resp_id, v_resp_appl_id);
+    v_org_id := fnd_profile.value('ORG_ID');
+    IF v_org_id IS NOT NULL THEN
+      mo_global.set_policy_context('S', v_org_id);
+    END IF;
+
+    FND_FILE.PUT_LINE(FND_FILE.LOG, 'Session Initialized for User: ' || v_user_id || ' Resp: ' || v_resp_id);
+    DBMS_OUTPUT.PUT_LINE('Session Initialized for User: ' || v_user_id || ' Resp: ' || v_resp_id);
+    FND_FILE.PUT_LINE(FND_FILE.LOG, 'Context set dynamically for Org ID: ' || v_org_id);
+    DBMS_OUTPUT.PUT_LINE('Context set dynamically for Org ID: ' || v_org_id);
+
+    FOR r_inv IN c_inv_range
+    LOOP
+      BEGIN
+        IF r_inv.attribute6 = 'Y' AND NVL(p_force_send, 'N') = 'N' THEN
+          v_skip_count := v_skip_count + 1; -- Fixed counter
+          FND_FILE.PUT_LINE(FND_FILE.LOG, 'Skipping: Invoice ' || r_inv.trx_number);
+          DBMS_OUTPUT.PUT_LINE('Skipping: Invoice ' || r_inv.trx_number);
+          CONTINUE;
+        END IF;
+
+        l_mail_part         := 1;
+        l_current_mail_size := 0;
+        l_boolean := fnd_request.add_layout('XXOA','XXARINVOICEWORDTAXPDF','en','US','PDF');
+        
+        ln_request_id := fnd_request.submit_request(
+                            application => 'XXOA',
+                            program     => 'XXARINVOICEWORDTAXPDF',
+                            sub_request => FALSE,
+                            argument1 => 'TRX_NUMBER', 
+                            argument2 => NULL, 
+                            argument3 => NULL, 
+                            argument4 => NULL, 
+                            argument5 => NULL,
+                            argument6 => NULL,
+                            argument7 => NULL, 
+                            argument8 => NULL,
+                            argument9 => r_inv.trx_number,
+                            argument10 => r_inv.trx_number,
+                            argument11 => fnd_date.date_to_canonical(r_inv.trx_date),
+                            argument12 => fnd_date.date_to_canonical(r_inv.trx_date),
+                            argument13 => 'N', 
+                            argument14 => CHR(0) );
+        COMMIT;
+
+        IF ln_request_id > 0 THEN
+          IF fnd_concurrent.wait_for_request(ln_request_id, 10, 600, l_phase, l_status, l_dev_phase, l_dev_status, l_message) THEN
+            IF l_dev_status = 'NORMAL' THEN
+              SELECT SUBSTR(file_name, INSTR(file_name,'/',-1)+1) INTO v_outfile_name FROM fnd_conc_req_outputs WHERE concurrent_request_id = ln_request_id AND file_type = 'PDF';
+              v_display_name := 'OA_AR_' || r_inv.full_type_meaning || '.pdf';
+              v_bfile := BFILENAME(v_directory, v_outfile_name);
+              DBMS_LOB.createtemporary(v_pdf_blob, TRUE);
+              DBMS_LOB.open(v_bfile, DBMS_LOB.lob_readonly);
+              DBMS_LOB.loadfromfile(v_pdf_blob, v_bfile, DBMS_LOB.getlength(v_bfile));
+              DBMS_LOB.close(v_bfile);
+
+              start_new_mail_part(r_inv.trx_number, l_mail_part, r_inv.bill_to_customer_id,r_inv.customer_name,r_inv.inv_balance,r_inv.soa_date);
+              l_b64_clob := blob_to_base64_clob(v_pdf_blob);
+              UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || UTL_TCP.crlf || 'Content-Type: application/pdf; name="'||v_display_name||'"' || UTL_TCP.crlf || 'Content-Transfer-Encoding: base64' || UTL_TCP.crlf || 'Content-Disposition: attachment; filename="' || v_display_name || '"' || UTL_TCP.crlf || UTL_TCP.crlf);
+              l_offset := 1;
+              WHILE l_offset <= DBMS_LOB.getlength(l_b64_clob) LOOP
+                UTL_SMTP.write_data(l_mail_conn, DBMS_LOB.substr(l_b64_clob, l_chunk_size, l_offset) || UTL_TCP.crlf);
+                l_offset := l_offset + l_chunk_size;
+              END LOOP;
+              l_current_mail_size := DBMS_LOB.getlength(v_pdf_blob);
+              v_zip_blob := NULL;
+
+              -- ATTACHMENT LOOP
+              FOR doc IN c_docs(r_inv.customer_trx_id)
+              LOOP
+                IF ((l_current_mail_size + DBMS_LOB.getlength(doc.file_data)) * 1.33) > l_limit THEN
+                  IF v_zip_blob IS NOT NULL THEN
+                    as_zip.finish_zip(v_zip_blob);
+                    l_zip_b64 := blob_to_base64_clob(v_zip_blob);
+                    UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || UTL_TCP.crlf || 'Content-Type: application/zip; name="Supporting_Docs_Part_'||l_mail_part||'.zip"' || UTL_TCP.crlf || 'Content-Transfer-Encoding: base64' || UTL_TCP.crlf || UTL_TCP.crlf);
+                    l_offset := 1;
+                    WHILE l_offset <= DBMS_LOB.getlength(l_zip_b64) LOOP
+                      UTL_SMTP.write_data(l_mail_conn, DBMS_LOB.substr(l_zip_b64, l_chunk_size, l_offset) || UTL_TCP.crlf);
+                      l_offset := l_offset + l_chunk_size;
+                    END LOOP;
+                  END IF;
+                  UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || '--' || UTL_TCP.crlf);
+                  l_reply := UTL_SMTP.close_data(l_mail_conn);
+                  UTL_SMTP.quit(l_mail_conn);
+                  
+                  l_mail_part := l_mail_part + 1;
+                  l_current_mail_size := 0;
+                  v_zip_blob := NULL;
+                  start_new_mail_part(r_inv.trx_number, l_mail_part, r_inv.bill_to_customer_id,r_inv.customer_name,r_inv.inv_balance,r_inv.soa_date);
+                 -- start_new_mail_part(r_inv.trx_number, l_mail_part, r_inv.bill_to_customer_id);
+                END IF;
+
+                as_zip.add1file(v_zip_blob, doc.file_name, doc.file_data);
+                l_current_mail_size := l_current_mail_size + DBMS_LOB.getlength(doc.file_data);
+              END LOOP;
+
+              IF v_zip_blob IS NOT NULL THEN
+                as_zip.finish_zip(v_zip_blob);
+                l_zip_b64  := blob_to_base64_clob(v_zip_blob);
+                v_zip_name := CASE WHEN l_mail_part = 1 THEN 'Supporting_Docs.zip' ELSE 'Supporting_Docs_Part_' || l_mail_part || '.zip' END;
+                UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || UTL_TCP.crlf || 'Content-Type: application/zip; name="'||v_zip_name||'"' || UTL_TCP.crlf || 'Content-Transfer-Encoding: base64' || UTL_TCP.crlf || UTL_TCP.crlf);
+                l_offset := 1;
+                WHILE l_offset <= DBMS_LOB.getlength(l_zip_b64) LOOP
+                  UTL_SMTP.write_data(l_mail_conn, DBMS_LOB.substr(l_zip_b64, l_chunk_size, l_offset) || UTL_TCP.crlf);
+                  l_offset := l_offset + l_chunk_size;
+                END LOOP;
+              END IF;
+
+              UTL_SMTP.write_data(l_mail_conn, '--' || l_boundary || '--' || UTL_TCP.crlf);
+              l_reply := UTL_SMTP.close_data(l_mail_conn);
+              UTL_SMTP.quit(l_mail_conn);
+
+              UPDATE ra_customer_trx_all
+              SET attribute6 = 'Y', attribute7 = 'Invoice print mail shared on ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH24:MI:SS')
+              WHERE customer_trx_id = r_inv.customer_trx_id;
+              COMMIT;
+              
+              v_sent_count := v_sent_count + 1; -- CORRECTED PLACEMENT
+              DBMS_OUTPUT.PUT_LINE('Invoice '|| r_inv.trx_number ||' sent successfully.');
+            ELSE
+              v_skip_count := v_skip_count + 1;
+              FND_FILE.PUT_LINE(FND_FILE.LOG, 'Invoice ' || r_inv.trx_number || ' failed. Status: ' || l_status);
+              DBMS_OUTPUT.PUT_LINE('Invoice ' || r_inv.trx_number || ' failed. Status: ' || l_status);
+            END IF;
+          ELSE
+            v_skip_count := v_skip_count + 1;
+            FND_FILE.PUT_LINE(FND_FILE.LOG, 'fnd_concurrent.wait_for_request failed for ' || ln_request_id);
+            DBMS_OUTPUT.PUT_LINE('fnd_concurrent.wait_for_request failed for ' || ln_request_id);
+          END IF;
+        END IF;
+
+        /* Cleanup */
+        IF v_pdf_blob IS NOT NULL AND DBMS_LOB.istemporary(v_pdf_blob) = 1 THEN DBMS_LOB.freetemporary(v_pdf_blob); END IF;
+        IF v_zip_blob IS NOT NULL AND DBMS_LOB.istemporary(v_zip_blob) = 1 THEN DBMS_LOB.freetemporary(v_zip_blob); END IF;
+        IF l_b64_clob IS NOT NULL AND DBMS_LOB.istemporary(l_b64_clob) = 1 THEN DBMS_LOB.freetemporary(l_b64_clob); END IF;
+        IF l_zip_b64 IS NOT NULL AND DBMS_LOB.istemporary(l_zip_b64) = 1 THEN DBMS_LOB.freetemporary(l_zip_b64); END IF;
+
+      EXCEPTION
+      WHEN OTHERS THEN
+        v_skip_count := v_skip_count + 1;
+        FND_FILE.PUT_LINE(FND_FILE.LOG, 'Error in Invoice ' || r_inv.trx_number || ': ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Error in Invoice ' || r_inv.trx_number || ': ' || SQLERRM);
+        BEGIN UTL_SMTP.quit(l_mail_conn); EXCEPTION WHEN OTHERS THEN NULL; END;
+      END;
+    END LOOP;
+
+    FND_FILE.PUT_LINE(FND_FILE.LOG, 'Total Sent: ' || v_sent_count);
+    DBMS_OUTPUT.PUT_LINE('Total Sent: ' || v_sent_count);
+    FND_FILE.PUT_LINE(FND_FILE.LOG, 'Total Skipped: ' || v_skip_count);
+    DBMS_OUTPUT.PUT_LINE('Total Skipped: ' || v_skip_count);
+    retcode := 0;
+    errbuf := 'Process Completed';
+  END SEND_INVOICE_EMAILS;
+END XXOA_AR_INV_MAIL_PKG;
