@@ -1,0 +1,92 @@
+SELECT
+(select bank_name from ce_bank_branches_v
+where branch_party_id = BANK_BRANCH_ID) bank_name, 
+(select BANK_BRANCH_NAME from ce_bank_branches_v
+where branch_party_id = BANK_BRANCH_ID) branch_name,
+(SELECT terr.territory_short_name
+   FROM ce_bank_branches_v br,
+        fnd_territories_vl terr
+  WHERE br.branch_party_id = b.BANK_BRANCH_ID
+    AND br.bank_home_country = terr.territory_code(+)
+) AS country,
+(SELECT CASE 
+            WHEN terr.territory_short_name = 'Oman' THEN 'Oman'
+            ELSE 'Outstation'
+        END
+   FROM ce_bank_branches_v br,
+        fnd_territories_vl terr
+  WHERE br.branch_party_id = b.BANK_BRANCH_ID
+    AND br.bank_home_country = terr.territory_code(+)
+) AS location,
+b.BANK_ACCOUNT_NUM,
+b.BANK_ACCOUNT_NAME,
+b.currency_code,
+--a.statement_date,
+TO_CHAR(a.statement_date, 'DD-MON-YYYY') AS statement_date,
+a.statement_number,
+a.CONTROL_BEGIN_BALANCE,
+a.CONTROL_END_BALANCE,
+a.CONTROL_END_BALANCE - a.CONTROL_BEGIN_BALANCE AS variance,
+CASE 
+    WHEN b.currency_code = 'OMR' THEN 1
+    ELSE (
+        SELECT gdr.conversion_rate
+        FROM gl_daily_rates gdr
+        WHERE gdr.from_currency = b.currency_code
+          AND gdr.to_currency = 'OMR'
+          AND gdr.conversion_date = a.statement_date
+          AND ROWNUM = 1
+    )
+END AS exchange_rate,
+(a.CONTROL_BEGIN_BALANCE *
+ (CASE 
+    WHEN b.currency_code = 'OMR' THEN 1
+    ELSE (
+        SELECT gdr.conversion_rate
+        FROM gl_daily_rates gdr
+        WHERE gdr.from_currency = b.currency_code
+          AND gdr.to_currency = 'OMR'
+          AND gdr.conversion_date = a.statement_date
+          AND ROWNUM = 1
+    )
+ END)
+) AS local_opening_balance,
+
+(a.CONTROL_END_BALANCE * 
+ (CASE 
+    WHEN b.currency_code = 'OMR' THEN 1
+    ELSE (
+        SELECT gdr.conversion_rate
+        FROM gl_daily_rates gdr
+        WHERE gdr.from_currency = b.currency_code
+          AND gdr.to_currency = 'OMR'
+          AND gdr.conversion_date = a.statement_date
+          AND ROWNUM = 1
+    )
+ END)
+) AS local_end_balance,
+
+(a.CONTROL_END_BALANCE - a.CONTROL_BEGIN_BALANCE) *
+(CASE 
+    WHEN b.currency_code = 'OMR' THEN 1
+    ELSE (
+        SELECT gdr.conversion_rate
+        FROM gl_daily_rates gdr
+        WHERE gdr.from_currency = b.currency_code
+          AND gdr.to_currency = 'OMR'
+          AND gdr.conversion_date = a.statement_date
+          AND ROWNUM = 1
+    )
+ END)
+AS local_variance
+
+FROM CE_STATEMENT_HEADERS a, ce_bank_accounts b 
+WHERE a.bank_account_id = b.bank_account_id
+--and a.STATEMENT_HEADER_ID=194714
+and a.STATEMENT_DATE > '01-MAY-2026'
+AND A.STATEMENT_DATE BETWEEN
+    NVL(:p_from_date, A.STATEMENT_DATE)
+AND NVL(:p_to_date, A.STATEMENT_DATE)
+AND B.BANK_ACCOUNT_ID = NVL(:p_bank_acc, B.BANK_ACCOUNT_ID)
+AND a.CONTROL_BEGIN_BALANCE IS NOT NULL
+AND a.STATEMENT_NUMBER NOT LIKE 'BANK%STATEMENT%'
